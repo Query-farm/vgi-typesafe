@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # pyproject deliberately carries no `[tool.uv.sources]`, so a fresh clone
+  # resolves from PyPI. This pins that shut: if a local path source is ever
+  # added, CI still proves the *published* dependencies are sufficient. The
+  # entry scripts carry their own PEP-723 headers, and a missing one shipped a
+  # worker that only ran from the author's project directory.
+  UV_NO_SOURCES: "1"
+
+jobs:
+  check:
+    name: Lint, types, offline tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --no-sources --all-extras
+      - name: Ruff (lint)
+        run: uv run --no-sources ruff check .
+      - name: Ruff (format)
+        run: uv run --no-sources ruff format --check .
+      - name: Mypy (strict)
+        run: uv run --no-sources mypy vgi_typesafe/
+      - name: Offline tests
+        run: uv run --no-sources pytest -q
+      # The gate the other 200-odd tests structurally cannot be: they all run
+      # inside a synced venv from the project root, which is precisely where a
+      # broken entry script still works.
+      - name: Entry points run with no project and no dev checkout
+        run: |
+          cd "$(mktemp -d)"
+          uv run --no-project "$GITHUB_WORKSPACE/typesafe_worker.py" --help > /dev/null
+          uv run --no-project "$GITHUB_WORKSPACE/serve.py" --help > /dev/null
+
+  catalog:
+    name: Catalog metadata (vgi-lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --no-sources --all-extras
+      # Structural tier only: --no-execute, because every example here would
+      # otherwise be billed against the real TypeSafe API. The executable tier
+      # belongs in a scheduled live workflow with a key.
+      - name: vgi-lint (structural)
+        run: |
+          uvx --no-sources --from vgi-lint-check vgi-lint lint \
+            "uv run --no-sources typesafe_worker.py" \
+            --no-execute --no-check-links --fail-on warning

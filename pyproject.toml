@@ -6,23 +6,47 @@ readme = "README.md"
 license = "MIT"
 authors = [{ name = "Query Farm", email = "hello@query.farm" }]
 keywords = ["vgi", "duckdb", "arrow", "typesafe", "classification", "sql"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 requires-python = ">=3.13"
 dependencies = [
-    "vgi-python[http]>=0.32.0",
+    "vgi-python>=0.33.0",
     "httpx>=0.27",
 ]
+
+[project.optional-dependencies]
+# HTTP-serving extra — what `serve.py` and the Docker image need.
+serve = ["vgi-python[http]>=0.33.0"]
 
 [dependency-groups]
 dev = [
     "pytest>=8",
     "ruff>=0.16,<0.17",
+    "mypy>=1.11",
+    "pyarrow-stubs",
     # Drives a real ATTACH in tests/test_end_to_end.py.
     "duckdb>=1.1",
 ]
 
 [project.scripts]
 vgi-typesafe = "vgi_typesafe.worker:main"
+vgi-typesafe-http = "vgi_typesafe.worker:main_http"
 vgi-typesafe-mock = "vgi_typesafe.mock_server:main"
+
+[project.urls]
+Homepage = "https://query.farm"
+Documentation = "https://query.farm/vgi/"
+Repository = "https://github.com/Query-farm/vgi-typesafe"
+Issues = "https://github.com/Query-farm/vgi-typesafe/issues"
 
 [build-system]
 requires = ["hatchling"]
@@ -34,16 +58,33 @@ path = "vgi_typesafe/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["vgi_typesafe"]
 
-# Built against the local framework checkout rather than the PyPI release.
-[tool.uv.sources]
-vgi-python = { path = "../vgi-python", editable = true }
+# NOTE: deliberately NO [tool.uv.sources]. A local path pin (e.g.
+# vgi-python = { path = "../vgi-python" }) makes the project installable only on
+# a machine that has that sibling checkout — CI, and everyone else, cannot sync
+# it. Develop against a local framework with `uv sync --no-sources` off, or an
+# explicit `uv pip install -e ../vgi-python`, rather than committing the pin.
 
 [tool.ruff]
 line-length = 110
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

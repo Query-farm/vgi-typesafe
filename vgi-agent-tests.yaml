@@ -1,0 +1,66 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+#
+# Private graders for the tasks published in `vgi.agent_test_tasks`.
+#
+# The catalog tag carries only {name, prompt} — the question an analyst asks.
+# The canonical answer lives here, outside the catalog, so an agent being
+# measured by `vgi-lint simulate` cannot read the answer key out of the very
+# worker it is querying (VGI416).
+tasks:
+  - name: route_a_support_ticket
+    reference_sql: >-
+      SELECT t.id, c.choice, c.confidence FROM tickets t,
+      LATERAL typesafe.main.choice(t.body, instructions => 'Which team should handle this?',
+      criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+      'billing': 'Charges, invoices, payment problems',
+      'returns': 'Exchanges, refunds, damaged items'}) c
+    success_criteria: >-
+      Uses typesafe.main.choice for the single question and reports the confidence column
+      alongside the chosen option.
+    unordered: true
+
+  - name: several_judgments_one_request
+    reference_sql: >-
+      SELECT t.id, a.dept.choice, a.angry.noul, a.severity.score FROM tickets t,
+      LATERAL typesafe.main.ask(t.body, questions =>
+      {'dept': {'type': 'choice', 'instructions': 'Which team should handle this?',
+      'criteria': {'shipping': 'Lost packages', 'billing': 'Invoices'}},
+      'angry': {'type': 'noul', 'instructions': 'Is the customer angry?'},
+      'severity': {'type': 'score', 'instructions': 'How bad is it?',
+      'criteria': ['minor', 'disruptive', 'critical']}}) a
+    success_criteria: >-
+      Uses a SINGLE typesafe.main.ask call carrying all three questions rather than three
+      separate calls, and reads each answer out of its own struct column.
+    unordered: true
+
+  - name: route_only_the_confident_ones
+    reference_sql: >-
+      SELECT t.id, c.choice FROM tickets t,
+      LATERAL typesafe.main.choice(t.body, instructions => 'Which team should handle this?',
+      criteria => MAP {'shipping': 'Lost packages', 'billing': 'Invoices'}) c
+      WHERE c.confidence > 0.8
+    success_criteria: >-
+      Filters on the confidence column rather than accepting every answer; the threshold itself
+      is a judgement call and any reasonable value counts.
+    unordered: true
+
+  - name: judge_a_whole_row
+    reference_sql: >-
+      SELECT t.id, a.urgent.noul FROM tickets t,
+      LATERAL typesafe.main.ask(t, questions =>
+      {'urgent': {'type': 'noul', 'instructions': 'Does this need a reply today?'}}) a
+    success_criteria: >-
+      Passes the whole row (or a struct built from several columns) as the state, rather than a
+      single text column, so the model sees the columns together.
+    unordered: true
+
+  - name: find_out_what_columns_come_back
+    reference_sql: >-
+      DESCRIBE SELECT * FROM typesafe.main.ask('x', questions =>
+      {'dept': {'type': 'choice', 'instructions': 'Which team?',
+      'criteria': {'shipping': 'Lost packages', 'billing': 'Invoices'}},
+      'urgent': {'type': 'noul', 'instructions': 'Needs a reply today?'}})
+    success_criteria: >-
+      Uses DESCRIBE (or an equivalent bind-only inspection) to read the result shape without
+      issuing a billed request, and reports one struct column per question plus usage.
+    unordered: true

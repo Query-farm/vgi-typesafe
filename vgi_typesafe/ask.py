@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """``ask()`` — several TypeSafe questions about each row, in one request per row.
 
 A System One request carries one ``state`` and a map of named questions that the
@@ -115,16 +117,17 @@ class AskArgs:
     """``ask(state, questions => ...)``."""
 
     state: Annotated[
-        AnyArrow, Arg(0, doc="The content to evaluate: VARCHAR, STRUCT (or a whole row), LIST or MAP")
+        AnyArrow, Arg(0, doc="The content to evaluate — a piece of text, a row, or a structured value")
     ]
     questions: Annotated[
         AnyArrow,
         Arg(
             "questions",
             doc=(
-                "STRUCT keyed by question name; each value is "
-                "{'type': 'choice'|'noul'|'score', 'instructions': ..., 'criteria': ...}. "
-                "A JSON string or a MAP is accepted too."
+                "One entry per question, keyed by the name you want its output column to have. "
+                "Each entry carries the question type, its instructions, and (for most types) its "
+                "criteria; see this function's documentation for the three types and the shape "
+                "each one expects."
             ),
         ),
     ]
@@ -137,7 +140,7 @@ class AskArgs:
     ] = 8
     parse_json: Annotated[
         bool,
-        Arg("parse_json", doc="Parse a VARCHAR/JSON state as JSON and send it structured", default=False),
+        Arg("parse_json", doc="Parse a textual state as JSON and send it structured", default=False),
     ] = False
 
 
@@ -382,6 +385,8 @@ class AskFunction(RowTransformFunction[AskArgs]):
     """Ask several questions about each input row — strictly 1->1, one request per row."""
 
     class Meta:
+        """Catalog metadata: name, docs, and the examples clients copy."""
+
         name = "ask"
         description = "Ask several TypeSafe questions (choice, noul, score) about each row in one request"
         categories = ["classification", "scoring", "blended"]
@@ -389,7 +394,7 @@ class AskFunction(RowTransformFunction[AskArgs]):
         tags = docs(
             category="classification",
             llm=(
-                "Ask any number of TypeSafe questions about each row and get one typed STRUCT column "
+                "Ask any number of TypeSafe questions about each row and get one typed `STRUCT` column "
                 "per question, for the cost of a single API request per row. Three question types: "
                 "`choice` picks one option (-> choice, confidence, probabilities), `noul` is a yes/no "
                 "probability (-> noul, 0-1), `score` places the row on an ordered scale (-> score, "
@@ -409,11 +414,11 @@ class AskFunction(RowTransformFunction[AskArgs]):
                 "model how the parts relate.\n\n"
                 "### Questions (`questions =>`)\n\n"
                 "A struct keyed by question name. Each value has `type`, `instructions`, and:\n\n"
-                "- `choice` — `criteria`: struct or MAP of option -> description (1-255 options).\n"
+                "- `choice` — `criteria`: struct or `MAP` of option -> description (1-255 options).\n"
                 "- `score` — `criteria`: ordered list of 2-10 level descriptions, lowest first.\n"
                 "- `noul` — optional `criteria` with `'true'` and/or `'false'` descriptions.\n\n"
                 "A criterion may be a string or a structured `{what, not_for, examples}` object. A "
-                "JSON string or a MAP is accepted in place of the struct. Questions are validated at "
+                "JSON string or a `MAP` is accepted in place of the struct. Questions are validated at "
                 "bind, before any row is sent.\n\n"
                 "### Output\n\n"
                 "One `STRUCT` column per question, named after it:\n\n"
@@ -433,10 +438,32 @@ class AskFunction(RowTransformFunction[AskArgs]):
             ),
             extra={
                 "vgi.result_dynamic_columns_md": (
-                    "One column per entry in `questions`, named after it, then `usage`. Each "
-                    "question column is a STRUCT whose fields depend on the question's `type`: "
-                    "choice -> (choice, confidence, probabilities), noul -> (noul), score -> "
-                    "(score, confidence, probabilities)."
+                    "The result carries one column per entry in `questions`, named after that "
+                    "entry, followed by a `usage` column. A question column's type is decided by "
+                    "its `type` field, so there are three variants.\n\n"
+                    "### A `choice` question\n\n"
+                    "| Name | Type | Description |\n"
+                    "| --- | --- | --- |\n"
+                    "| &lt;question name&gt; | STRUCT(choice VARCHAR, confidence DOUBLE, "
+                    "probabilities MAP(VARCHAR, DOUBLE)) | The chosen option, how concentrated "
+                    "the distribution was, and every option's probability in criteria order. |\n\n"
+                    "### A `noul` question\n\n"
+                    "| Name | Type | Description |\n"
+                    "| --- | --- | --- |\n"
+                    "| &lt;question name&gt; | STRUCT(noul DOUBLE) | Probability between 0 and 1 "
+                    "that the answer is yes; 0.5 is genuinely undecided. |\n\n"
+                    "### A `score` question\n\n"
+                    "| Name | Type | Description |\n"
+                    "| --- | --- | --- |\n"
+                    "| &lt;question name&gt; | STRUCT(score DOUBLE, confidence DOUBLE, "
+                    "probabilities MAP(INTEGER, DOUBLE)) | Probability-weighted position on the "
+                    "scale, its confidence, and each level's probability keyed by level number "
+                    "(0 is the first criterion). |\n\n"
+                    "### Always present\n\n"
+                    "| Name | Type | Description |\n"
+                    "| --- | --- | --- |\n"
+                    "| usage | STRUCT(model VARCHAR, input_tokens BIGINT, output_tokens BIGINT) | "
+                    "The model that answered and the tokens billed for this row's request. |"
                 ),
             },
         )

@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """``choice()`` driven over the real VGI protocol, against the mock endpoint.
 
 This spawns the worker as a subprocess and talks to it with the framework's own

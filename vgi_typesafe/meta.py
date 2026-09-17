@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """Catalog-metadata helpers: column comments, result schemas, doc tags.
 
 VGI publishes documentation as ``vgi.*`` tags on catalog objects. The tags are
@@ -17,12 +19,12 @@ import pyarrow as pa
 _COMMENT_KEY = b"comment"
 
 
-def field(name: str, type: pa.DataType, comment: str, *, nullable: bool = True) -> pa.Field:
+def field(name: str, type: pa.DataType, comment: str, *, nullable: bool = True) -> pa.Field[Any]:
     """A ``pa.Field`` carrying its column comment as Arrow field metadata."""
     return pa.field(name, type, nullable=nullable, metadata={_COMMENT_KEY: comment.encode()})
 
 
-def comment_of(f: pa.Field) -> str:
+def comment_of(f: pa.Field[Any]) -> str:
     """The comment attached to ``f``, or an empty string when it has none."""
     if f.metadata and _COMMENT_KEY in f.metadata:
         return str(f.metadata[_COMMENT_KEY].decode())

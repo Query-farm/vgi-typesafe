@@ -5,7 +5,10 @@ System One questions — **choice**, **noul** and **score** — to DuckDB as tab
 `LATERAL` join against.
 
 ```sql
-ATTACH 'typesafe' (TYPE vgi, LOCATION 'uv run typesafe_worker.py');
+-- The entry script carries a PEP-723 header, so `uv run` resolves its
+-- dependencies on the fly: this works from any directory, on a machine that has
+-- never seen this project.
+ATTACH 'typesafe' (TYPE vgi, LOCATION 'uv run /path/to/typesafe_worker.py');
 CREATE SECRET (TYPE typesafe, api_key 'ts-...');
 
 -- Route, flag and grade every ticket: three judgments, ONE request per row.
@@ -152,10 +155,49 @@ CREATE SECRET (TYPE typesafe, api_key 'test-key', base_url 'http://127.0.0.1:878
 ## Development
 
 ```sh
-uv sync                       # creates .venv; vgi-python comes from ../vgi-python (editable)
+uv sync --all-extras          # creates .venv; dependencies come from PyPI
 uv run pytest                 # everything, hermetic — no network, no real key
 uv run ruff check . && uv run ruff format --check .
+uv run mypy vgi_typesafe/     # strict
 ```
+
+`pyproject.toml` deliberately carries **no `[tool.uv.sources]`**. A local path pin
+(`vgi-python = { path = "../vgi-python" }`) makes the project installable only on a machine that
+has that sibling checkout — CI, and everyone else, cannot sync it. To develop against a local
+framework, `uv pip install -e ../vgi-python` into the venv instead of committing the pin.
+
+### Catalog metadata
+
+The worker is linted by [vgi-lint-check](https://github.com/Query-farm/vgi-lint-check), which
+checks that the catalog documents itself well enough for an agent to use it:
+
+```sh
+uvx --from vgi-lint-check vgi-lint lint "uv run typesafe_worker.py" \
+    --no-execute --no-check-links --fail-on warning   # currently 100/100, 0 findings
+```
+
+CI runs the **structural** tier only (`--no-execute`): the executable tier would bill every
+shipped example against the real TypeSafe API. The one `vgi.executable_examples` entry is a
+`DESCRIBE`, which binds without issuing a request, so it is runnable by anyone.
+
+`vgi.agent_test_tasks` publishes only each task's `{name, prompt}`. The graders live in
+`vgi-agent-tests.yaml`, outside the catalog, so an agent being measured by `vgi-lint simulate`
+cannot read the answer key out of the worker it is querying.
+
+### CI
+
+| Job | Gates |
+| --- | --- |
+| Lint, types, offline tests | ruff check, ruff format, mypy strict, pytest, and both entry points run with `--no-project` from a scratch directory |
+| Catalog metadata | `vgi-lint` structural tier, failing on warning |
+
+The entry-point step is the one the other 200-odd tests structurally cannot be: they all run from
+inside a synced venv at the project root, which is exactly where a broken entry script still works.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Worker © 2026 Query Farm LLC. Judgments are produced by TypeSafe's
+System One models and are subject to TypeSafe's terms of use.
 
 | Tests | |
 | --- | --- |
@@ -173,7 +215,9 @@ extension that accepts ANY-typed blended input columns (Query-farm/vgi `d39ca9e`
 ## Layout
 
 ```
-typesafe_worker.py        stdio entry point (the ATTACH LOCATION)
+typesafe_worker.py        stdio entry point (the ATTACH LOCATION), PEP-723 self-resolving
+serve.py                  HTTP entry point (uv run serve.py --port 8000)
+vgi-agent-tests.yaml      private graders for the published agent test tasks
 vgi_typesafe/
   ask.py                  ask(): several questions per row, structured state
   choice.py               choice(): the one-question shorthand

@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """API-key resolution: the secret first, then the environment, never silently nothing."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """SQL executed against a real ATTACH, with the mock endpoint behind it.
 
 This is the only place the things the task is actually about get exercised

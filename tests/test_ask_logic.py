@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """``ask()``'s pure logic: question validation, state conversion, output shape.
 
 No worker and no HTTP here — ``test_ask_function.py`` drives the real thing.

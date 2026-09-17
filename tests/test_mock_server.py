@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """The mocked endpoint must be indistinguishable from production on the wire.
 
 If it accepted requests the real API rejects, the worker's tests would pass

@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """TypeSafe API-key resolution.
 
 The key arrives as a DuckDB secret rather than a function argument or an ATTACH
@@ -64,7 +66,8 @@ class Credentials:
     base_url: str = DEFAULT_BASE_URL
 
     def __repr__(self) -> str:
-        # The key must never reach a log line or a traceback via repr().
+        """Render without the key — it must never reach a log line or a traceback."""
+        # Redaction lives here rather than at every call site.
         return f"Credentials(api_key='***', base_url={self.base_url!r})"
 
 

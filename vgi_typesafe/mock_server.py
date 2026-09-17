@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """A mocked TypeSafe endpoint: ``POST /v1/systemone`` — choice, noul and score.
 
 It speaks the real wire format — Bearer auth, the ``state``/``model``/``questions``
@@ -218,6 +220,7 @@ class MockTypeSafeServer(ThreadingHTTPServer):
     request_queue_size = 256
 
     def __init__(self, address: tuple[str, int], api_key: str | None = None) -> None:
+        """Bind the mock on ``address``, requiring ``api_key`` when one is given."""
         super().__init__(address, _Handler)
         self.api_key = api_key
         #: Every accepted request body, for tests to assert on.
@@ -226,10 +229,17 @@ class MockTypeSafeServer(ThreadingHTTPServer):
 
     @property
     def base_url(self) -> str:
+        """The bound URL, for a client or a DuckDB secret's ``base_url``."""
         host, port = self.server_address[:2]
+        # server_address is typed for every address family; this server always
+        # binds AF_INET, so host is a str — decode defensively rather than
+        # letting a bytes render as "b'127.0.0.1'" in a URL.
+        if isinstance(host, bytes):
+            host = host.decode()
         return f"http://{host}:{port}"
 
     def record(self, body: dict[str, Any]) -> None:
+        """Record one accepted request body for a test to assert on."""
         with self._lock:
             self.requests.append(body)
 

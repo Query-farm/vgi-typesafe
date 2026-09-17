@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """``ask()`` driven over the real VGI protocol, against the mock endpoint.
 
 The worker runs as a subprocess and is driven with the framework's own client —

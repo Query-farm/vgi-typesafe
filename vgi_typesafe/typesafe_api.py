@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """The one place this worker talks HTTP: ``POST /v1/systemone``.
 
 A System One request carries a single ``state`` and a map of named questions,
@@ -57,6 +59,7 @@ class TypeSafeError(RuntimeError):
     """The API answered with an error, or with something that is not an answer."""
 
     def __init__(self, message: str, *, status: int | None = None) -> None:
+        """Carry the HTTP ``status`` alongside the message, when there was one."""
         super().__init__(message)
         self.status = status
 
@@ -112,9 +115,9 @@ def _retry_delay(response: httpx.Response, attempt: int) -> float:
     """Honour ``Retry-After`` when the server sends a usable one, else back off."""
     header = response.headers.get("retry-after", "")
     try:
-        return min(max(float(header), 0.0), BACKOFF_CAP_SECONDS)
+        return float(min(max(float(header), 0.0), BACKOFF_CAP_SECONDS))
     except ValueError:
-        return min(BACKOFF_BASE_SECONDS * 2**attempt, BACKOFF_CAP_SECONDS)
+        return float(min(BACKOFF_BASE_SECONDS * 2**attempt, BACKOFF_CAP_SECONDS))
 
 
 def _post(client: httpx.Client, credentials: Credentials, payload: dict[str, Any]) -> dict[str, Any]:

@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """The HTTP layer: wire format, retries, errors, and per-batch de-duplication."""
 
 from __future__ import annotations

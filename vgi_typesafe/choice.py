@@ -1,3 +1,5 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+
 """``choice()`` — a TypeSafe choice question as a LATERAL-joinable table function.
 
 It is a **blended** (:class:`~vgi.table_in_out_function.RowTransformFunction`)
@@ -97,7 +99,7 @@ class ChoiceArgs:
         Arg(
             "criteria",
             arrow_type=pa.map_(pa.string(), pa.string()),
-            doc="MAP of option name -> description of when that option applies (required, 1-255 options)",
+            doc="Each option paired with a description of when it applies (required)",
             default=None,
         ),
     ] = None
@@ -146,6 +148,8 @@ class ChoiceFunction(RowTransformFunction[ChoiceArgs]):
     FIXED_SCHEMA: ClassVar[pa.Schema] = CHOICE_SCHEMA
 
     class Meta:
+        """Catalog metadata: name, docs, and the examples clients copy."""
+
         name = "choice"
         description = "Classify each row into one of a set of options with a TypeSafe choice question"
         categories = ["classification", "blended"]
@@ -158,7 +162,7 @@ class ChoiceFunction(RowTransformFunction[ChoiceArgs]):
                 "One model. Pass the text as the positional argument — a literal, or a column under "
                 "LATERAL to classify a whole table — and describe the question once with the named "
                 "`instructions` and `criteria` arguments. Returns one row per input row: the chosen "
-                "option, a 0-1 confidence, and the full probability distribution as a MAP. Filter "
+                "option, a 0-1 confidence, and the full probability distribution as a `MAP`. Filter "
                 "on `confidence` to route uncertain rows to review. Needs a `typesafe` secret."
             ),
             md=(
@@ -177,8 +181,11 @@ class ChoiceFunction(RowTransformFunction[ChoiceArgs]):
                 "An API failure raises — it never degrades to NULL, which would be "
                 "indistinguishable from a NULL input. 429 and 529 are retried with backoff first.\n\n"
                 "### Authentication\n\n"
-                "`CREATE SECRET (TYPE typesafe, api_key '...')`. Add `base_url` to target the "
-                "bundled mock endpoint. `TYPESAFE_API_KEY` in the worker's environment is the fallback."
+                "Add `base_url` to the secret to target the bundled mock endpoint. "
+                "`TYPESAFE_API_KEY` in the worker's environment is the fallback.\n\n"
+                "```sql\n"
+                "CREATE SECRET (TYPE typesafe, api_key '...');\n"
+                "```"
             ),
             example_queries=examples(
                 ("Classify every row of a table via LATERAL", _LATERAL_EXAMPLE),
