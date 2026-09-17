@@ -1,0 +1,55 @@
+[project]
+name = "vgi-typesafe"
+dynamic = ["version"]
+description = "A VGI (Vector Gateway Interface) worker exposing TypeSafe System One choice questions to DuckDB/SQL as a LATERAL-joinable table function"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Query Farm", email = "hello@query.farm" }]
+keywords = ["vgi", "duckdb", "arrow", "typesafe", "classification", "sql"]
+requires-python = ">=3.13"
+dependencies = [
+    "vgi-python[http]>=0.32.0",
+    "httpx>=0.27",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.16,<0.17",
+    # Drives a real ATTACH in tests/test_end_to_end.py.
+    "duckdb>=1.1",
+]
+
+[project.scripts]
+vgi-typesafe = "vgi_typesafe.worker:main"
+vgi-typesafe-mock = "vgi_typesafe.mock_server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "vgi_typesafe/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vgi_typesafe"]
+
+# Built against the local framework checkout rather than the PyPI release.
+[tool.uv.sources]
+vgi-python = { path = "../vgi-python", editable = true }
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# e2e tests are hermetic (mock endpoint) and skip themselves without a haybarn binary.
+addopts = "-m 'not live'"
+markers = [
+    "e2e: drives a real ATTACH against the mock endpoint (needs a DuckDB shell with the vgi extension)",
+    "live: hits the real TypeSafe API (needs TYPESAFE_API_KEY)",
+]
