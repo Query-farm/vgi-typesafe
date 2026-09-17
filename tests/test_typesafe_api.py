@@ -195,3 +195,101 @@ class TestErrors:
     def test_a_malformed_success_raises_rather_than_becoming_null(self, response: httpx.Response) -> None:
         with pytest.raises(api.TypeSafeError):
             _ask(_client(lambda request: response), ["x"])
+
+
+QUESTIONS = {
+    "dept": {"type": "choice", "instructions": "Which team?", "criteria": CRITERIA},
+    "angry": {"type": "noul", "instructions": "Is the customer furious?"},
+    "severity": {
+        "type": "score",
+        "instructions": "How bad?",
+        "criteria": ["minor", "disruptive delay", "outage"],
+    },
+}
+
+
+def _ask_many(client: httpx.Client, states: list[Any], **kwargs: Any) -> list[api.Response | None]:
+    return api.ask_many(states, QUESTIONS, credentials=CREDENTIALS, client=client, **kwargs)
+
+
+class TestAskMany:
+    def test_all_questions_travel_in_one_request(self) -> None:
+        seen: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content))
+            return _mock_backend(request)
+
+        _ask_many(_client(handler), [{"message": "lost package", "tier": "gold"}])
+
+        (payload,) = seen
+        assert payload["state"] == {"message": "lost package", "tier": "gold"}
+        assert payload["questions"] == QUESTIONS
+
+    def test_each_answer_is_shaped_by_its_question_type(self) -> None:
+        (response,) = _ask_many(_client(_mock_backend), ["furious about this outage and lost package"])
+        assert response is not None
+        assert set(response.answers["dept"]) == {"choice", "confidence", "probabilities"}
+        assert set(response.answers["angry"]) == {"noul"}
+        assert set(response.answers["severity"]) == {"score", "confidence", "probabilities"}
+        assert response.answers["dept"]["choice"] == "shipping"
+        assert response.model == "jev-latest" and response.output_tokens == 3
+
+    def test_score_levels_become_ascending_integers(self) -> None:
+        """The API keys levels as strings; SQL wants MAP(INTEGER, DOUBLE), in order."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = handle(json.loads(request.content))
+            levels = body["answers"]["severity"]["probabilities"]
+            body["answers"]["severity"]["probabilities"] = dict(reversed(levels.items()))
+            return httpx.Response(200, json=body)
+
+        (response,) = _ask_many(_client(handler), ["x"])
+        assert response is not None
+        assert list(response.answers["severity"]["probabilities"]) == [0, 1, 2]
+
+    def test_structured_states_are_deduplicated_regardless_of_key_order(self) -> None:
+        calls: list[Any] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(json.loads(request.content)["state"])
+            return _mock_backend(request)
+
+        states = [{"a": 1, "b": [1, 2]}, {"b": [1, 2], "a": 1}, {"a": 2, "b": [1, 2]}, None]
+        responses = _ask_many(_client(handler), states)
+        assert len(calls) == 2
+        assert responses[0] is responses[1] and responses[3] is None
+
+    def test_a_string_and_the_same_text_as_an_object_are_different_states(self) -> None:
+        calls: list[Any] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(json.loads(request.content)["state"])
+            return _mock_backend(request)
+
+        _ask_many(_client(handler), ['{"a": 1}', {"a": 1}])
+        assert calls.count('{"a": 1}') == 1 and calls.count({"a": 1}) == 1
+
+    @pytest.mark.parametrize(
+        ("mutate", "fragment"),
+        [
+            (lambda a: a.pop("angry"), "no 'angry' answer"),
+            (lambda a: a["angry"].pop("noul"), "no numeric 'noul'"),
+            (lambda a: a["angry"].update(noul="high"), "no numeric 'noul'"),
+            (lambda a: a["severity"].pop("score"), "no numeric 'score'"),
+            (lambda a: a["dept"].pop("choice"), "no 'choice'"),
+            (lambda a: a["angry"].update(type="choice"), "asked as 'noul'"),
+        ],
+    )
+    def test_a_malformed_answer_raises_and_names_the_question(self, mutate, fragment: str) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = handle(json.loads(request.content))
+            mutate(body["answers"])
+            return httpx.Response(200, json=body)
+
+        with pytest.raises(api.TypeSafeError, match=fragment):
+            _ask_many(_client(handler), ["x"])
+
+    def test_a_response_without_answers_raises(self) -> None:
+        with pytest.raises(api.TypeSafeError, match="no 'answers'"):
+            _ask_many(_client(lambda request: httpx.Response(200, json={"model": "m"})), ["x"])

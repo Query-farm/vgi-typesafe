@@ -1,16 +1,24 @@
-"""VGI worker exposing TypeSafe System One choice questions to DuckDB/SQL.
+"""VGI worker exposing TypeSafe System One questions to DuckDB/SQL.
 
     ATTACH 'typesafe' (TYPE vgi, LOCATION 'uv run typesafe_worker.py');
     CREATE SECRET (TYPE typesafe, api_key '...');
 
+    -- several questions about each row, one request per row
+    SELECT t.id, a.dept.choice, a.urgent.noul
+    FROM tickets t,
+         LATERAL typesafe.main.ask(t, questions => {
+             'dept':   {'type': 'choice', 'instructions': '...', 'criteria': {...}},
+             'urgent': {'type': 'noul',   'instructions': '...'}}) a;
+
+    -- the one-question shorthand
     SELECT t.id, c.choice, c.confidence
     FROM tickets t,
          LATERAL typesafe.main.choice(t.body,
              instructions => 'Which team should handle this?',
              criteria => MAP {'shipping': '...', 'billing': '...'}) c;
 
-The function name is bare (``choice``, not ``typesafe_choice``) because it is
-already qualified by the catalog it lives in.
+Function names are bare (``ask``, not ``typesafe_ask``) because they are already
+qualified by the catalog they live in.
 """
 
 from __future__ import annotations
@@ -22,14 +30,17 @@ from vgi.catalog import Catalog, ReadOnlyCatalogInterface, Schema
 from vgi.catalog.catalog_interface import CatalogInfo
 
 from vgi_typesafe import __version__, auth
-from vgi_typesafe.choice import FUNCTIONS
+from vgi_typesafe.ask import AskFunction
+from vgi_typesafe.choice import ChoiceFunction
 from vgi_typesafe.meta import keywords
 
 IMPLEMENTATION_VERSION = __version__
 DATA_VERSION_SPEC = f"=={__version__}"
 SOURCE_URL = "https://github.com/Query-farm/vgi-typesafe"
 
-_KEYWORDS = keywords("typesafe", "system one", "classification", "choice", "routing", "confidence", "jev")
+_KEYWORDS = keywords(
+    "typesafe", "system one", "classification", "choice", "noul", "score", "routing", "confidence", "jev"
+)
 
 _CATALOG_TAGS = {
     "provider": "typesafe",
@@ -50,9 +61,13 @@ _CATALOG_TAGS = {
         "TypeSafe evaluates typed questions against a *state* (the content to judge) and returns "
         "structured results rather than prose.\n\n"
         "### What is here\n\n"
-        "`choice()` — pick one option from a set, with a probability for every option and a "
-        "confidence score. It is a blended table function, so it composes under a correlated "
-        "`LATERAL` to classify a whole table in one query.\n\n"
+        "- `ask()` — any number of questions about each row, answered in a single request per "
+        "row, returning one typed STRUCT column per question. Three question types: `choice` "
+        "(pick one option), `noul` (a yes/no probability) and `score` (a position on an ordered "
+        "scale). The state can be a string, a struct, a list, or the whole row.\n"
+        "- `choice()` — the one-question shorthand, with flat output columns.\n\n"
+        "Both are blended table functions, so they compose under a correlated `LATERAL` to "
+        "judge a whole table in one query.\n\n"
         "### Authentication\n\n"
         "`CREATE SECRET (TYPE typesafe, api_key '...')`. The key is redacted in "
         "`duckdb_secrets()`. The optional `base_url` field points the worker at another endpoint, "
@@ -73,7 +88,7 @@ _SCHEMA_TAGS = {
 _TYPESAFE_CATALOG = Catalog(
     name="typesafe",
     default_schema="main",
-    comment="TypeSafe System One choice questions as a LATERAL-joinable table function",
+    comment="TypeSafe System One questions (choice, noul, score) as LATERAL-joinable table functions",
     tags=_CATALOG_TAGS,
     source_url=SOURCE_URL,
     schemas=[
@@ -81,7 +96,7 @@ _TYPESAFE_CATALOG = Catalog(
             path=["main"],
             comment="TypeSafe question functions — require a 'typesafe' secret",
             tags=_SCHEMA_TAGS,
-            functions=list(FUNCTIONS),
+            functions=[AskFunction, ChoiceFunction],
         ),
     ],
 )

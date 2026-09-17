@@ -10,7 +10,14 @@ import httpx
 import pytest
 
 from vgi_typesafe import mock_server
-from vgi_typesafe.mock_server import RequestInvalid, answer_choice, handle, running
+from vgi_typesafe.mock_server import (
+    RequestInvalid,
+    answer_choice,
+    answer_noul,
+    answer_score,
+    handle,
+    running,
+)
 
 CRITERIA = {
     "returns": "Exchanges, refunds, wrong or damaged items",
@@ -67,6 +74,106 @@ class TestScoring:
         assert handle(_request()) == handle(_request())
 
 
+SCALE = ["minor cosmetic question", "disruptive delay", "critical outage, data loss"]
+
+
+class TestScoreScoring:
+    @pytest.mark.parametrize(
+        ("state", "level"),
+        [("a cosmetic question", 0), ("a disruptive delay", 1), ("critical outage with data loss", 2)],
+    )
+    def test_the_matching_level_dominates(self, state: str, level: int) -> None:
+        answer = answer_score(state, {"criteria": SCALE})
+        assert max(answer["probabilities"], key=answer["probabilities"].get) == str(level)
+        assert abs(answer["score"] - level) < 0.5
+
+    def test_score_is_the_probability_weighted_level(self) -> None:
+        answer = answer_score("disruptive delay", {"criteria": SCALE})
+        expected = sum(int(level) * p for level, p in answer["probabilities"].items())
+        assert answer["score"] == pytest.approx(expected, abs=1e-5)
+        assert sum(answer["probabilities"].values()) == pytest.approx(1.0, abs=1e-5)
+
+    def test_levels_are_keyed_by_number_and_the_legend_maps_them_back(self) -> None:
+        answer = answer_score("x", {"criteria": SCALE})
+        assert list(answer["probabilities"]) == ["0", "1", "2"]
+        assert answer["legend"] == {"0": SCALE[0], "1": SCALE[1], "2": SCALE[2]}
+
+    def test_no_signal_lands_mid_scale_with_zero_confidence(self) -> None:
+        answer = answer_score("zzz", {"criteria": SCALE})
+        assert answer["score"] == pytest.approx(1.0, abs=1e-5)
+        assert answer["confidence"] == pytest.approx(0.0, abs=1e-5)
+
+    def test_structured_levels_are_accepted(self) -> None:
+        levels = [{"what": "minor", "examples": ["typo"]}, {"what": "major", "examples": ["outage"]}]
+        answer = answer_score("there is an outage", {"criteria": levels})
+        assert answer["score"] > 0.5
+        assert answer["legend"] == {"0": "minor", "1": "major"}
+
+
+class TestNoulScoring:
+    QUESTION = {
+        "instructions": "Is the customer angry?",
+        "criteria": {"true": "furious, unacceptable", "false": "calm, thanks, happy"},
+    }
+
+    def test_evidence_for_pushes_toward_one(self) -> None:
+        assert answer_noul("This is unacceptable, I am furious", self.QUESTION)["noul"] > 0.9
+
+    def test_evidence_against_pushes_toward_zero(self) -> None:
+        assert answer_noul("Thanks, I am happy and calm", self.QUESTION)["noul"] < 0.1
+
+    def test_no_evidence_reads_as_probably_not(self) -> None:
+        assert answer_noul("zzz", self.QUESTION)["noul"] == pytest.approx(0.268941, abs=1e-6)
+
+    def test_criteria_are_optional(self) -> None:
+        question = {"instructions": "Is this about an invoice?"}
+        assert answer_noul("my invoice is wrong", question)["noul"] > 0.5
+        assert answer_noul("hello there", question)["noul"] < 0.5
+
+    def test_is_a_probability(self) -> None:
+        for state in ("", "furious " * 50, "thanks " * 50):
+            assert 0.0 <= answer_noul(state, self.QUESTION)["noul"] <= 1.0
+
+
+class TestMixedRequest:
+    def test_every_type_is_answered_in_one_request(self) -> None:
+        request = {
+            "state": {"message": "critical outage, I am furious", "tier": "gold"},
+            "model": "jev-latest",
+            "questions": {
+                "dept": {"type": "choice", "instructions": "Which team?", "criteria": CRITERIA},
+                "angry": {"type": "noul", "instructions": "Is the customer furious?"},
+                "severity": {"type": "score", "instructions": "How bad?", "criteria": SCALE},
+            },
+        }
+        answers = handle(request)["answers"]
+        assert {name: a["type"] for name, a in answers.items()} == {
+            "dept": "choice",
+            "angry": "noul",
+            "severity": "score",
+        }
+        assert answers["angry"]["noul"] > 0.5 and answers["severity"]["score"] > 1.5
+
+    @pytest.mark.parametrize(
+        ("question", "fragment"),
+        [
+            ({"type": "score", "instructions": "x", "criteria": ["only one"]}, "2-10 levels"),
+            ({"type": "score", "instructions": "x", "criteria": [str(i) for i in range(11)]}, "2-10 levels"),
+            ({"type": "score", "instructions": "x", "criteria": {"a": "b"}}, "ordered array"),
+            ({"type": "score", "instructions": "x", "criteria": ["ok", 3]}, "string or an object"),
+            (
+                {"type": "noul", "instructions": "x", "criteria": {"maybe": "y"}},
+                "only have 'true' and 'false'",
+            ),
+            ({"type": "noul", "instructions": "x", "criteria": ["y"]}, "only have 'true' and 'false'"),
+            ({"type": "choice", "instructions": "x", "criteria": ["a", "b"]}, "non-empty object"),
+        ],
+    )
+    def test_each_type_validates_its_own_criteria(self, question: dict, fragment: str) -> None:
+        with pytest.raises(RequestInvalid, match=fragment):
+            handle({"state": "s", "model": "m", "questions": {"q": question}})
+
+
 class TestValidation:
     def test_response_shape(self) -> None:
         body = handle(_request())
@@ -85,7 +192,8 @@ class TestValidation:
             (lambda r: r.pop("state"), "'state'"),
             (lambda r: r.pop("model"), "'model'"),
             (lambda r: r.update(questions={}), "'questions'"),
-            (lambda r: r["questions"]["department"].update(type="score"), "only answers type 'choice'"),
+            (lambda r: r["questions"]["department"].update(type="essay"), "'type' must be one of"),
+            (lambda r: r["questions"]["department"].update(type=None), "'type' must be one of"),
             (lambda r: r["questions"]["department"].update(instructions=" "), "'instructions'"),
             (lambda r: r["questions"]["department"].update(criteria={}), "'criteria'"),
             (

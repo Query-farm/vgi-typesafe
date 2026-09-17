@@ -1,8 +1,8 @@
 """SQL executed against a real ATTACH, with the mock endpoint behind it.
 
 This is the only place the things the task is actually about get exercised
-together: a correlated LATERAL, the MAP-typed named argument, and a key arriving
-through ``CREATE SECRET``.
+together: a correlated LATERAL, struct- and MAP-typed named arguments, native
+STRUCT / whole-row state, and a key arriving through ``CREATE SECRET``.
 
 It needs a DuckDB whose ``vgi`` extension speaks the same protocol as the local
 ``vgi-python`` checkout. The community build lags it, so this drives the
@@ -130,3 +130,144 @@ def test_no_key_at_all_says_how_to_fix_it(mock: MockTypeSafeServer) -> None:
     result = _run(mock, f"SELECT * FROM typesafe.main.choice('hello', {QUESTION});", api_key=None)
     assert "CREATE SECRET" in result.stderr + result.stdout
     assert mock.requests == []
+
+
+# ---------------------------------------------------------------------------
+# ask(): several questions per row
+# ---------------------------------------------------------------------------
+
+ASK_QUESTIONS = """questions => {
+    'dept':     {'type': 'choice', 'instructions': 'Which team should handle this?',
+                 'criteria': {'shipping': 'Delivery status, delays, lost packages',
+                              'billing': 'Charges, invoices, payment problems'}},
+    'angry':    {'type': 'noul', 'instructions': 'Is the customer angry?',
+                 'criteria': {'true': 'furious, unacceptable', 'false': 'calm, thanks'}},
+    'severity': {'type': 'score', 'instructions': 'How bad is it?',
+                 'criteria': ['minor question', 'disruptive delay', 'critical outage']}}"""
+
+TICKETS = """(VALUES (1, 'My package is lost, this is unacceptable', 'gold'),
+                     (2, 'Thanks, one invoice question', 'free'),
+                     (3, NULL, NULL)) t(id, body, tier)"""
+
+
+def test_ask_answers_every_question_from_one_request_per_row(mock: MockTypeSafeServer) -> None:
+    rows = _rows(
+        mock,
+        f"""
+        SELECT t.id, a.dept.choice AS dept, a.angry.noul > 0.5 AS angry,
+               round(a.severity.score) AS severity, a.usage.output_tokens AS answered
+        FROM {TICKETS}, LATERAL typesafe.main.ask({{'message': t.body, 'tier': t.tier}}, {ASK_QUESTIONS}) a
+        ORDER BY t.id;
+        """,
+    )
+    assert rows == [
+        {"id": 1, "dept": "shipping", "angry": True, "severity": 1.0, "answered": 3},
+        {"id": 2, "dept": "billing", "angry": False, "severity": 0.0, "answered": 3},
+        {"id": 3, "dept": None, "angry": None, "severity": None, "answered": None},
+    ]
+    assert len(mock.requests) == 2, "a row whose struct holds only NULLs makes no request"
+    assert mock.requests[0]["state"].keys() == {"message", "tier"}
+
+
+def test_ask_takes_the_whole_row_as_its_state(mock: MockTypeSafeServer) -> None:
+    rows = _rows(
+        mock,
+        f"SELECT a.dept.choice AS dept FROM {TICKETS}, LATERAL typesafe.main.ask(t, {ASK_QUESTIONS}) a "
+        "WHERE t.id = 1;",
+    )
+    assert rows == [{"dept": "shipping"}]
+    assert {"id": 1, "tier": "gold"}.items() <= mock.requests[0]["state"].items()
+
+
+def test_ask_output_columns_are_typed_per_question(mock: MockTypeSafeServer) -> None:
+    rows = _rows(mock, f"DESCRIBE SELECT * FROM typesafe.main.ask('x', {ASK_QUESTIONS});")
+    assert {r["column_name"]: r["column_type"] for r in rows} == {
+        "dept": "STRUCT(choice VARCHAR, confidence DOUBLE, probabilities MAP(VARCHAR, DOUBLE))",
+        "angry": "STRUCT(noul DOUBLE)",
+        "severity": "STRUCT(score DOUBLE, confidence DOUBLE, probabilities MAP(INTEGER, DOUBLE))",
+        "usage": "STRUCT(model VARCHAR, input_tokens BIGINT, output_tokens BIGINT)",
+    }
+
+
+def test_ask_accepts_questions_as_json_and_a_json_state(mock: MockTypeSafeServer) -> None:
+    rows = _rows(
+        mock,
+        """
+        SELECT a.spam.noul < 0.5 AS not_spam
+        FROM (VALUES ('{"subject": "lunch?", "body": "see you at noon"}'::JSON)) t(payload),
+             LATERAL typesafe.main.ask(t.payload, parse_json => true, questions =>
+                 '{"spam": {"type": "noul", "instructions": "Is this a lottery prize scam?"}}') a;
+        """,
+    )
+    assert rows == [{"not_spam": True}]
+    assert mock.requests[0]["state"] == {"subject": "lunch?", "body": "see you at noon"}
+
+
+def test_ask_pairs_rows_across_many_input_batches(mock: MockTypeSafeServer) -> None:
+    rows = _rows(
+        mock,
+        """
+        WITH t AS (SELECT i AS id, CASE WHEN i % 3 = 0 THEN 'invoice charges' ELSE 'lost package' END AS body,
+                          CASE WHEN i % 3 = 0 THEN 'billing' ELSE 'shipping' END AS expected
+                   FROM range(3000) r(i))
+        SELECT count(*) AS n, count(*) FILTER (WHERE a.dept.choice = t.expected) AS correct
+        FROM t, LATERAL typesafe.main.ask({'id': t.id, 'message': t.body},
+            questions => {'dept': {'type': 'choice', 'instructions': 'Which team?',
+                                   'criteria': {'shipping': 'lost packages', 'billing': 'invoice charges'}}},
+            concurrency => 16) a;
+        """,
+    )
+    assert rows == [{"n": 3000, "correct": 3000}]
+
+
+def test_ask_rejects_a_malformed_question_at_bind(mock: MockTypeSafeServer) -> None:
+    result = _run(
+        mock,
+        "SELECT * FROM typesafe.main.ask('x', questions => "
+        "{'sev': {'type': 'score', 'instructions': 'How bad?', 'criteria': ['only one level']}});",
+    )
+    assert "score question 'sev' requires 'criteria'" in result.stderr + result.stdout
+    assert mock.requests == []
+
+
+def test_ask_rejects_a_bare_scalar_state_with_a_way_out(mock: MockTypeSafeServer) -> None:
+    result = _run(mock, f"SELECT * FROM typesafe.main.ask(42, {ASK_QUESTIONS});")
+    assert "state must be VARCHAR, STRUCT, LIST or MAP" in result.stderr + result.stdout
+
+
+# ---------------------------------------------------------------------------
+# documentation is executable
+# ---------------------------------------------------------------------------
+
+
+def _published_examples() -> list[tuple[str, str]]:
+    from vgi_typesafe.ask import AskFunction
+    from vgi_typesafe.choice import ChoiceFunction
+
+    return [
+        (f"{function.Meta.name}: {example.description}", example.sql)
+        for function in (AskFunction, ChoiceFunction)
+        for example in function.Meta.examples
+    ]
+
+
+@pytest.mark.parametrize(
+    ("label", "sql"), _published_examples(), ids=[label for label, _ in _published_examples()]
+)
+def test_every_published_example_runs(mock: MockTypeSafeServer, label: str, sql: str) -> None:
+    """The examples in the catalog metadata are what users and agents copy; they must work."""
+    assert _rows(mock, f"{sql};"), label
+
+
+def test_the_readme_headline_query_runs(mock: MockTypeSafeServer) -> None:
+    readme = (PROJECT / "README.md").read_text()
+    query = readme.split("-- Route, flag and grade every ticket", 1)[1].split("```", 1)[0]
+    query = query.split("\n", 1)[1]  # drop the rest of the comment line
+    rows = _rows(
+        mock,
+        "CREATE TEMP TABLE tickets AS SELECT * FROM (VALUES "
+        "(1, 'My package is lost and delivery is delayed'), "
+        "(2, 'I was charged twice on my invoice')) t(id, body);\n"
+        + query.replace("WHERE a.dept.confidence > 0.8", "ORDER BY t.id"),
+    )
+    assert [r["choice"] for r in rows] == ["shipping", "billing"]

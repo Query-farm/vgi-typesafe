@@ -238,6 +238,3 @@ class ChoiceFunction(RowTransformFunction[ChoiceArgs]):
         }
         full = pa.RecordBatch.from_pydict(columns, schema=cls.FIXED_SCHEMA)
         out.emit(full.select(params.output_schema.names))
-
-
-FUNCTIONS: list[type] = [ChoiceFunction]

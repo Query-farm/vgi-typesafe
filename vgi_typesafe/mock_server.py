@@ -1,11 +1,17 @@
-"""A mocked TypeSafe endpoint: ``POST /v1/systemone``, choice questions only.
+"""A mocked TypeSafe endpoint: ``POST /v1/systemone`` — choice, noul and score.
 
 It speaks the real wire format — Bearer auth, the ``state``/``model``/``questions``
 request, the ``answers``/``usage`` response, 401 and 422 errors — so the worker
-cannot tell it from production. What it does *not* have is a model: options are
-scored by keyword overlap between the state and each option's name and
-description, then softmaxed. That is deterministic, which is the point — tests
-can assert exact choices.
+cannot tell it from production. What it does *not* have is a model. Everything
+is keyword overlap between the state and the question's text:
+
+* choice — each option scored against its name and description, then softmaxed.
+* score  — each level of the scale scored the same way; the score is the
+  probability-weighted level.
+* noul   — hits against the instructions (and the ``true`` criterion) push
+  toward 1, hits against the ``false`` criterion push toward 0.
+
+That is deterministic, which is the point — tests can assert exact answers.
 
     uv run vgi-typesafe-mock --port 8787 --api-key test-key
 
@@ -28,6 +34,8 @@ from typing import Any
 
 SYSTEM_ONE_PATH = "/v1/systemone"
 MAX_OPTIONS = 255
+MIN_SCORE_LEVELS = 2
+MAX_SCORE_LEVELS = 10
 
 #: How sharply one extra keyword hit separates two options.
 _SHARPNESS = 2.0
@@ -84,32 +92,80 @@ def _option_vocab(name: str, description: Any) -> tuple[set[str], set[str]]:
     return set(_tokens(f"{name} {positive}")), set(_tokens(negative))
 
 
+def _distribution(state_tokens: list[str], descriptions: list[tuple[str, Any]]) -> tuple[list[float], float]:
+    """Softmaxed keyword-overlap probabilities over labelled descriptions, and their confidence.
+
+    Confidence is probability concentration: 1 minus normalized entropy, so a
+    uniform distribution is 0 and a one-hot distribution is 1.
+    """
+    scores = []
+    for label, description in descriptions:
+        attract, repel = _option_vocab(label, description)
+        scores.append(float(sum((t in attract) - (t in repel) for t in state_tokens)))
+    peak = max(scores)
+    weights = [math.exp(_SHARPNESS * (score - peak)) for score in scores]
+    total = sum(weights)
+    probabilities = [round(weight / total, 6) for weight in weights]
+    entropy = -sum(p * math.log(p) for p in probabilities if p > 0)
+    confidence = 1.0 if len(scores) == 1 else max(0.0, 1.0 - entropy / math.log(len(scores)))
+    return probabilities, round(confidence, 6)
+
+
 def answer_choice(state: Any, question: dict[str, Any]) -> dict[str, Any]:
     """Score one choice question against the state."""
     criteria = question["criteria"]
-    state_tokens = _tokens(_flatten(state))
-    scores: dict[str, float] = {}
-    for name, description in criteria.items():
-        attract, repel = _option_vocab(name, description)
-        scores[name] = float(sum((t in attract) - (t in repel) for t in state_tokens))
-
-    peak = max(scores.values())
-    weights = {name: math.exp(_SHARPNESS * (score - peak)) for name, score in scores.items()}
-    total = sum(weights.values())
-    probabilities = {name: round(weight / total, 6) for name, weight in weights.items()}
-
-    # Confidence as probability concentration: 1 minus normalized entropy.
-    entropy = -sum(p * math.log(p) for p in probabilities.values() if p > 0)
-    confidence = 1.0 if len(criteria) == 1 else max(0.0, 1.0 - entropy / math.log(len(criteria)))
-
+    values, confidence = _distribution(_tokens(_flatten(state)), list(criteria.items()))
+    probabilities = dict(zip(criteria, values, strict=True))
     # Ties go to the first-listed option, so results do not depend on dict hashing.
     choice = max(probabilities, key=lambda name: probabilities[name])
+    return {"type": "choice", "choice": choice, "confidence": confidence, "probabilities": probabilities}
+
+
+def answer_score(state: Any, question: dict[str, Any]) -> dict[str, Any]:
+    """Place the state on an ordered scale: the probability-weighted level."""
+    levels = question["criteria"]
+    # A level has no name of its own, only its description.
+    values, confidence = _distribution(_tokens(_flatten(state)), [("", level) for level in levels])
     return {
-        "type": "choice",
-        "choice": choice,
-        "confidence": round(confidence, 6),
-        "probabilities": probabilities,
+        "type": "score",
+        "score": round(sum(index * p for index, p in enumerate(values)), 6),
+        "confidence": confidence,
+        "legend": {
+            str(i): level if isinstance(level, str) else _flatten(level.get("what"))
+            for i, level in enumerate(levels)
+        },
+        "probabilities": {str(i): p for i, p in enumerate(values)},
     }
+
+
+def answer_noul(state: Any, question: dict[str, Any]) -> dict[str, Any]:
+    """A yes/no probability. No evidence at all reads as "probably not" (~0.27)."""
+    criteria = question.get("criteria") or {}
+    yes = set(_tokens(f"{question['instructions']} {_flatten(criteria.get('true'))}"))
+    no = set(_tokens(_flatten(criteria.get("false")))) - yes
+    evidence = sum((t in yes) - (t in no) for t in _tokens(_flatten(state)))
+    return {"type": "noul", "noul": round(1.0 / (1.0 + math.exp(-(_SHARPNESS * evidence - 1.0))), 6)}
+
+
+_ANSWERERS = {"choice": answer_choice, "noul": answer_noul, "score": answer_score}
+
+
+def _validate_criteria(qid: str, kind: str, criteria: Any) -> None:
+    if kind == "choice":
+        if not isinstance(criteria, dict) or not criteria:
+            raise RequestInvalid(f"question {qid!r}: 'criteria' must be a non-empty object")
+        if len(criteria) > MAX_OPTIONS:
+            raise RequestInvalid(f"question {qid!r}: at most {MAX_OPTIONS} options are allowed")
+    elif kind == "score":
+        if not isinstance(criteria, list) or not MIN_SCORE_LEVELS <= len(criteria) <= MAX_SCORE_LEVELS:
+            raise RequestInvalid(
+                f"question {qid!r}: 'criteria' must be an ordered array of "
+                f"{MIN_SCORE_LEVELS}-{MAX_SCORE_LEVELS} levels"
+            )
+        if not all(isinstance(level, (str, dict)) for level in criteria):
+            raise RequestInvalid(f"question {qid!r}: each level must be a string or an object")
+    elif criteria is not None and (not isinstance(criteria, dict) or set(criteria) - {"true", "false"}):
+        raise RequestInvalid(f"question {qid!r}: noul 'criteria' may only have 'true' and 'false'")
 
 
 def _validate(body: Any) -> tuple[Any, str, dict[str, dict[str, Any]]]:
@@ -126,24 +182,21 @@ def _validate(body: Any) -> tuple[Any, str, dict[str, dict[str, Any]]]:
     for qid, question in questions.items():
         if not isinstance(question, dict):
             raise RequestInvalid(f"question {qid!r} must be an object")
-        if question.get("type") != "choice":
+        kind = question.get("type")
+        if kind not in _ANSWERERS:
             raise RequestInvalid(
-                f"question {qid!r}: this mock only answers type 'choice', got {question.get('type')!r}"
+                f"question {qid!r}: 'type' must be one of {', '.join(_ANSWERERS)}, got {kind!r}"
             )
         if not isinstance(question.get("instructions"), str) or not question["instructions"].strip():
             raise RequestInvalid(f"question {qid!r}: 'instructions' is required")
-        criteria = question.get("criteria")
-        if not isinstance(criteria, dict) or not criteria:
-            raise RequestInvalid(f"question {qid!r}: 'criteria' must be a non-empty object")
-        if len(criteria) > MAX_OPTIONS:
-            raise RequestInvalid(f"question {qid!r}: at most {MAX_OPTIONS} options are allowed")
+        _validate_criteria(qid, kind, question.get("criteria"))
     return body["state"], model, questions
 
 
 def handle(body: Any) -> dict[str, Any]:
     """Answer one decoded System One request. Raises :class:`RequestInvalid`."""
     state, model, questions = _validate(body)
-    answers = {qid: answer_choice(state, question) for qid, question in questions.items()}
+    answers = {qid: _ANSWERERS[question["type"]](state, question) for qid, question in questions.items()}
     return {
         "model": model,
         "answers": answers,
@@ -158,6 +211,11 @@ class MockTypeSafeServer(ThreadingHTTPServer):
     """The mock endpoint. ``api_key=None`` accepts any non-empty Bearer token."""
 
     daemon_threads = True
+    # socketserver's default listen backlog is 5. A LATERAL over a few thousand
+    # rows arrives as bursts of concurrent connections from several workers at
+    # once; past the backlog the kernel drops SYNs and clients see connect
+    # timeouts that look like a worker bug.
+    request_queue_size = 256
 
     def __init__(self, address: tuple[str, int], api_key: str | None = None) -> None:
         super().__init__(address, _Handler)
@@ -234,7 +292,9 @@ def running(api_key: str | None = None, port: int = 0) -> Iterator[MockTypeSafeS
 
 def main() -> None:
     """Run the mock endpoint in the foreground."""
-    parser = argparse.ArgumentParser(description="Mock TypeSafe /v1/systemone endpoint (choice questions)")
+    parser = argparse.ArgumentParser(
+        description="Mock TypeSafe /v1/systemone endpoint (choice, noul and score)"
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--api-key", default=None, help="require this exact key (default: accept any)")
