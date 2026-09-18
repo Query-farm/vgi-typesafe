@@ -49,11 +49,15 @@ WHERE a.dept.confidence > 0.8;
 | Function | Use it for |
 | --- | --- |
 | [`ask()`](#askstate-questions--) | Any number of questions per row, any mix of types, structured state. |
-| [`choice()`](#choicestate-instructions--criteria---model--concurrency-) | The one-question shorthand, with flat output columns. |
+| [`choice()`](#choicestate-instructions--criteria---model--concurrency-) | One `choice` question: pick an option. Flat output columns. |
+| [`noul()`](#noulstate-instructions---criteria--model--concurrency-) | One `noul` question: yes/no, answered as a probability. |
+| [`score()`](#scorestate-instructions--criteria---model--concurrency-) | One `score` question: a position on an ordered scale. |
+| [`is_true()`](#is_truestate-instructions) | A noul as a **scalar**, for `WHERE` / `CASE` / `ORDER BY` without a join. |
 | [`models()`](#models) | Which models `model =>` will accept. No arguments, no tokens. |
 
-For `ask()` and `choice()` the first argument **is** the per-row input, so the same call works on a
-literal, on `FROM t, f(t.x)`, and on `LATERAL f(t.x)` alike. `models()` takes no input at all.
+For the four table functions the first argument **is** the per-row input, so the same call works on a
+literal, on `FROM t, f(t.x)`, and on `LATERAL f(t.x)` alike. `is_true()` is an ordinary scalar
+expression. `models()` takes no input at all.
 
 ## `ask(state, questions => ...)`
 
@@ -144,11 +148,88 @@ Behaviour worth knowing:
   be silently wrong. `429` and `529` are retried with exponential backoff (honouring `Retry-After`) first.
 - `instructions` and `criteria` are validated at bind, so a malformed question fails before any row is sent.
 
+## `noul(state, instructions => [, criteria =>, model =>, concurrency =>])`
+
+The shorthand for a single yes/no question. A *noul* answer is one probability and nothing else —
+there is no chosen option and no distribution, so there is no `confidence` column either: the number
+already carries its own certainty, and 0.5 is exactly what low confidence looks like.
+
+| Argument | | |
+| --- | --- | --- |
+| `state` | positional `VARCHAR` | The content to evaluate. A literal or a column. |
+| `instructions` | named `VARCHAR`, required | The question, phrased so yes and no both make sense. |
+| `criteria` | named `MAP(VARCHAR, VARCHAR)`, optional | `'true'` → what a yes looks like, `'false'` → what a no looks like. Either alone is fine; no other key is accepted. |
+| `model` | named `VARCHAR` | Defaults to `jev-latest`. |
+| `concurrency` | named `INTEGER` | In-flight requests per input batch. Default 8, max 64. |
+
+| Output column | Type | |
+| --- | --- | --- |
+| `noul` | `DOUBLE` | Probability the answer is yes: near 1 yes, near 0 no, 0.5 genuinely undecided. |
+| `model` | `VARCHAR` | The model that answered. |
+| `input_tokens`, `output_tokens` | `BIGINT` | Usage for that row's request. |
+
+Compare it against a threshold you pick, and keep the rows near 0.5 for a human. Row semantics,
+error handling and billing are identical to `choice()`. Omitting `criteria` sends no `criteria` key
+at all, which is not the same request as sending an empty one.
+
+## `score(state, instructions =>, criteria => [, model =>, concurrency =>])`
+
+The shorthand for a single ordered-scale question. Where a choice's criteria is a `MAP` of named
+options, a score's is an ordered `VARCHAR[]`: the *position* of a level is its meaning, and the
+answer is expressed in those positions.
+
+| Argument | | |
+| --- | --- | --- |
+| `state` | positional `VARCHAR` | The content to evaluate. A literal or a column. |
+| `instructions` | named `VARCHAR`, required | The question. |
+| `criteria` | named `VARCHAR[]`, required | The rungs of the scale, lowest first. 2–10 of them. |
+| `model` | named `VARCHAR` | Defaults to `jev-latest`. |
+| `concurrency` | named `INTEGER` | In-flight requests per input batch. Default 8, max 64. |
+
+| Output column | Type | |
+| --- | --- | --- |
+| `score` | `DOUBLE` | Probability-weighted position: `0.0` is the first level, and a row read as halfway between the first two rungs scores `0.5`. |
+| `confidence` | `DOUBLE` | 0–1, how concentrated the distribution is. |
+| `probabilities` | `MAP(INTEGER, DOUBLE)` | Each level's probability, keyed by level number (0 = first). |
+| `model` | `VARCHAR` | The model that answered. |
+| `input_tokens`, `output_tokens` | `BIGINT` | Usage for that row's request. |
+
+`score` is a position, not a level: round it to snap to a rung, or leave it alone to rank rows
+against each other. `probabilities` is keyed by number rather than by the level's text, so the key
+stays meaningful when two levels read similarly. A scale with fewer than two rungs is rejected at
+bind — production accepts one and scores every row `0.0`, which is a scale that cannot place
+anything.
+
+## `is_true(state, instructions)`
+
+The same yes/no question as `noul()`, as a **scalar** returning just the probability:
+
+```sql
+SELECT * FROM tickets WHERE typesafe.main.is_true(body, 'Is this urgent?') > 0.8;
+
+UPDATE tickets SET urgent = typesafe.main.is_true(body, 'Is this urgent?') > 0.8;
+```
+
+A noul answer *is* one number, so a scalar loses nothing by returning only that — and one number
+drops straight into a `WHERE`, a `CASE`, an `ORDER BY` or an `UPDATE ... SET`, where the table
+function needs a `LATERAL` join or a scalar subquery around it. **This is conciseness, not
+capability:** `noul()` can already express every one of those, and `tests/test_end_to_end.py` pins
+that the two agree on the same row.
+
+- It returns a **`DOUBLE`, not a `BOOLEAN`** — it is the probability that the answer is yes, so
+  compare it against a threshold. The name says which question is being asked, not what comes back.
+- DuckDB scalars take no named arguments, so the signature is the whole surface: the default model,
+  no `criteria`, no usage columns. `noul()` is where those live.
+- It still **batches**: one request per *distinct non-null value* in each chunk, issued
+  concurrently — the same accounting the table functions do, through the same code path.
+- `NULL` in, `NULL` out, with no request. Errors raise, so a failure cannot silently drop a row from
+  a `WHERE` clause. The question is checked at bind.
+
 ## `models()`
 
-`ask()` and `choice()` both take `model =>` and default it to `jev-latest`. Nothing else in the catalog
-says what else is allowed — and TypeSafe publishes a preview line alongside the stable one, so the
-default is not the only answer.
+Every question table function takes `model =>` and defaults it to `jev-latest`. Nothing else in the
+catalog says what else is allowed — and TypeSafe publishes a preview line alongside the stable one,
+so the default is not the only answer.
 
 ```sql
 SELECT name, description, release_date FROM typesafe.main.models ORDER BY name;
@@ -210,6 +291,29 @@ CREATE SECRET (TYPE typesafe, api_key 'test-key', base_url 'http://127.0.0.1:878
 Ruff, mypy and pydoclint settings are mirrored from
 [vgi-python](https://github.com/Query-farm/vgi-python), so the fleet lints identically: 120-column
 lines, Google-style docstrings enforced on tests as well as the package, and mypy `strict`.
+
+### Layout
+
+One module per published function, plus the four they all share.
+
+| Path | |
+| --- | --- |
+| `vgi_typesafe/worker.py` | The catalog: which functions exist, and the catalog/schema-level docs. |
+| `vgi_typesafe/ask.py` | `ask()` — N questions per row, dynamic output schema. |
+| `vgi_typesafe/choice.py` | `choice()` — one choice question, flat columns. |
+| `vgi_typesafe/noul.py` | `noul()` — one yes/no question, flat columns. |
+| `vgi_typesafe/score.py` | `score()` — one ordered-scale question, flat columns. |
+| `vgi_typesafe/is_true.py` | `is_true()` — the scalar form of a noul. |
+| `vgi_typesafe/models.py` | `models()`, registered as both a function and a table. |
+| `vgi_typesafe/typesafe_api.py` | The only module that speaks HTTP: requests, retries, answer parsing. |
+| `vgi_typesafe/auth.py` | Secret and environment resolution for the API key. |
+| `vgi_typesafe/meta.py` | Catalog-tag helpers: column comments, result schemas, doc tags. |
+| `vgi_typesafe/mock_server.py` | The bundled endpoint the whole suite runs against. |
+| `vgi-agent-tests.yaml` | Private graders for the tasks published in `vgi.agent_test_tasks`. |
+
+Every question function is a thin wrapper over `typesafe_api.ask_many()`, which is the one place a
+batch becomes requests — one per *distinct* non-null state, concurrently. A new question type adds a
+module, not a request path.
 
 ## Where we are stricter than the API
 

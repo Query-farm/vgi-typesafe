@@ -12,12 +12,22 @@
              'dept':   {'type': 'choice', 'instructions': '...', 'criteria': {...}},
              'urgent': {'type': 'noul',   'instructions': '...'}}) a;
 
-    -- the one-question shorthand
+    -- the one-question shorthands, one per question type
     SELECT t.id, c.choice, c.confidence
     FROM tickets t,
          LATERAL typesafe.main.choice(t.body,
              instructions => 'Which team should handle this?',
              criteria => MAP {'shipping': '...', 'billing': '...'}) c;
+
+    SELECT n.noul FROM tickets t,
+         LATERAL typesafe.main.noul(t.body, instructions => 'Needs a reply today?') n;
+
+    SELECT s.score FROM tickets t,
+         LATERAL typesafe.main.score(t.body, instructions => 'How bad is it?',
+             criteria => ['minor', 'disruptive', 'critical']) s;
+
+    -- a noul answer is one number, so it is also a plain expression
+    SELECT * FROM tickets WHERE typesafe.main.is_true(body, 'Is this urgent?') > 0.8;
 
     -- what may go in `model =>`
     SELECT name, description, release_date FROM typesafe.main.models();
@@ -38,15 +48,29 @@ from vgi.catalog.catalog_interface import CatalogInfo
 from vgi_typesafe import __version__, auth
 from vgi_typesafe.ask import AskFunction
 from vgi_typesafe.choice import ChoiceFunction
+from vgi_typesafe.is_true import IsTrueFunction
 from vgi_typesafe.meta import column_comments, docs, examples, keywords
 from vgi_typesafe.models import MODELS_SCHEMA, ModelsFunction
+from vgi_typesafe.noul import NoulFunction
+from vgi_typesafe.score import ScoreFunction
 
 IMPLEMENTATION_VERSION = __version__
 DATA_VERSION_SPEC = f"=={__version__}"
 SOURCE_URL = "https://github.com/Query-farm/vgi-typesafe"
 
 _KEYWORDS = keywords(
-    "typesafe", "system one", "classification", "choice", "noul", "score", "routing", "confidence", "jev", "models"
+    "typesafe",
+    "system one",
+    "classification",
+    "choice",
+    "noul",
+    "score",
+    "yes/no",
+    "scale",
+    "routing",
+    "confidence",
+    "jev",
+    "models",
 )
 
 _CATEGORIES = json.dumps(
@@ -115,6 +139,31 @@ _AGENT_TEST_TASKS = json.dumps(
             "prompt": (
                 "Before I run this against real data: what columns and types come back if I ask a "
                 "choice question and a yes/no question about the same row?"
+            ),
+        },
+        {
+            "name": "flag_which_messages_need_a_reply",
+            "prompt": (
+                "For these two messages — 'My package never arrived and nobody has replied in "
+                "three days' and 'Thanks, just a routine question' — I do not want a yes or a no. "
+                "I want to know how likely each one is to need a reply today, so I can pick my own "
+                "cut-off later."
+            ),
+        },
+        {
+            "name": "rate_severity_on_a_scale",
+            "prompt": (
+                "Rate 'The whole site is down and no orders can be placed' on a three-point "
+                "severity scale running from a minor question up to a critical outage, and tell me "
+                "how sure the model was."
+            ),
+        },
+        {
+            "name": "filter_rows_by_a_yes_no_question",
+            "prompt": (
+                "From these two messages — 'My package never arrived' and 'Thanks for the quick "
+                "refund' — keep only the ones about a lost package. I want the AI judgment inline "
+                "in the WHERE clause, not joined in as a separate table."
             ),
         },
         {
@@ -192,9 +241,10 @@ _CATALOG_TAGS = {
         "Structured AI judgments from TypeSafe's System One model, as SQL. Unlike a text-generating "
         "LLM, it answers a typed question about a piece of content and returns a value software "
         "can consume directly. Reach for this catalog to classify rows of a table into a fixed set "
-        "of options — ticket routing, intent detection, content labelling — and get a calibrated "
-        "confidence with each answer. `models()` lists the models a question may name. Requires a "
-        "`typesafe` secret holding an API key."
+        "of options — ticket routing, intent detection, content labelling — to answer a yes/no "
+        "question as a probability rather than a verdict, or to place a row on an ordered scale. "
+        "Every answer carries a calibrated confidence. `models()` lists the models a question may "
+        "name. Requires a `typesafe` secret holding an API key."
     ),
     "vgi.doc_md": (
         "TypeSafe evaluates typed questions against a *state* (the content to judge) and returns "
@@ -204,10 +254,13 @@ _CATALOG_TAGS = {
         "row, returning one typed `STRUCT` column per question. Three question types: `choice` "
         "(pick one option), `noul` (a yes/no probability) and `score` (a position on an ordered "
         "scale). The state can be a string, a struct, a list, or the whole row.\n"
-        "- `choice()` — the one-question shorthand, with flat output columns.\n"
-        "- `models()` — the models either of them will accept in `model =>`, with no arguments "
+        "- `choice()`, `noul()` and `score()` — the one-question shorthands, one per question "
+        "type, with flat output columns instead of a `STRUCT`.\n"
+        "- `is_true()` — a scalar returning a noul's probability on its own, so a yes/no judgment "
+        "drops straight into a `WHERE`, a `CASE` or an `ORDER BY` without a join.\n"
+        "- `models()` — the models any of them will accept in `model =>`, with no arguments "
         "and no token cost.\n\n"
-        "The two question functions are blended table functions, so they compose under a "
+        "The four question table functions are blended, so they compose under a "
         "correlated `LATERAL` to judge a whole table in one query.\n\n"
         "### Authentication\n\n"
         "The key is redacted in `duckdb_secrets()`. The optional `base_url` field points the "
@@ -244,33 +297,49 @@ _SCHEMA_TAGS = {
             "criteria => MAP {'shipping': 'Lost packages', 'billing': 'Invoices'})",
         ),
         (
+            "Rate one text column on an ordered scale",
+            "SELECT score, confidence FROM typesafe.main.score('The whole site is down', "
+            "instructions => 'How severe is this?', "
+            "criteria => ['minor question', 'disruptive delay', 'critical outage'])",
+        ),
+        (
+            "Keep only the rows a yes/no question is true of",
+            "SELECT t.body FROM (VALUES ('My package never arrived'), ('Thanks for the quick refund')) "
+            "t(body) WHERE typesafe.main.is_true(t.body, 'Is this message about a lost package?') > 0.5",
+        ),
+        (
             "List the models a question may name",
             "SELECT name, description, release_date FROM typesafe.main.models() ORDER BY name",
         ),
     ),
     "vgi.doc_llm": (
-        "Two of the three functions here turn one row into a typed judgment. Reach for `ask()` when "
+        "Everything here but `models()` turns one row into a typed judgment. Reach for `ask()` when "
         "you want several judgments about the same row — it sends one request per row no matter "
-        "how many questions you attach, and returns one `STRUCT` column per question. Reach for "
-        "`choice()` when you want exactly one option picked from a set and prefer flat columns. "
-        "Both take the content as their first argument, so they compose under a correlated LATERAL "
-        "to judge a whole table. Every answer carries a confidence you can filter on. The third, "
-        "`models()`, takes no arguments and lists what either will accept in `model =>`."
+        "how many questions you attach, and returns one `STRUCT` column per question. Reach for the "
+        "shorthands when you want exactly one judgment and prefer flat columns: `choice()` picks an "
+        "option, `noul()` answers yes/no as a probability, `score()` places the row on an ordered "
+        "scale. They take the content as their first argument, so they compose under a correlated "
+        "LATERAL to judge a whole table. `is_true()` is the same yes/no question as a scalar, for "
+        "putting a judgment inside a `WHERE` or an `ORDER BY` without a join. `models()` takes no "
+        "arguments and lists what any of them will accept in `model =>`."
     ),
     "vgi.doc_md": (
-        "Three table functions over TypeSafe's System One models.\n\n"
+        "Five table functions and one scalar over TypeSafe's System One models.\n\n"
         "### Which to use\n\n"
         "- `ask()` — any number of questions per row (`choice`, `noul`, `score`), one request per "
         "row, one typed `STRUCT` column per question plus a `usage` column.\n"
-        "- `choice()` — the one-question shorthand, returning flat columns.\n"
+        "- `choice()` — pick one option from a set; flat columns, with the full distribution.\n"
+        "- `noul()` — a yes/no question, answered as a probability between 0 and 1.\n"
+        "- `score()` — a position on an ordered scale you describe, lowest level first.\n"
+        "- `is_true()` — the scalar form of a noul: one number, so it needs no join.\n"
         "- `models()` — no arguments, no token cost: the models `model =>` will accept.\n\n"
         "### Shared behaviour\n\n"
-        "The two question functions are blended table functions: one registration serves a literal "
+        "The four question table functions are blended: one registration serves a literal "
         "call, an implicit lateral and an explicit one alike — see this schema's example queries "
-        "for each shape. Both produce exactly one output row per input row, "
+        "for each shape. They produce exactly one output row per input row, "
         "skip the request entirely for a NULL input, ask once for repeated inputs within a batch, "
-        "and raise on an API error rather than degrading to NULL. All three need a `typesafe` "
-        "secret."
+        "and raise on an API error rather than degrading to NULL. `is_true()` follows the same "
+        "rules per value. All of them need a `typesafe` secret."
     ),
 }
 
@@ -285,8 +354,8 @@ _MODELS_TABLE_DOCS = docs(
     category="reference",
     llm=(
         "Every TypeSafe model this key may name, as a plain table — the same rows `models()` "
-        "returns, without the parentheses. Read it before setting `model =>` on `ask()` or "
-        "`choice()`: those default to `jev-latest`, and this is the only place in SQL that says "
+        "returns, without the parentheses. Read it before setting `model =>` on any question "
+        "function: they default to `jev-latest`, and this is the only place in SQL that says "
         "what else is accepted. Scanning it calls the API but bills no tokens."
     ),
     md=(
@@ -295,7 +364,7 @@ _MODELS_TABLE_DOCS = docs(
         "table form exists because a listing that takes no arguments reads better without "
         "parentheses — see this table's example queries for the exact statement.\n\n"
         "### Using a name you find here\n\n"
-        "`model =>` is a bind-time argument on `ask()` and `choice()`, so it takes a literal: "
+        "`model =>` is a bind-time argument on every question function, so it takes a literal: "
         "paste the `name` into the call rather than joining this table into it.\n\n"
         "### Cost and freshness\n\n"
         "A `GET` that judges nothing and bills no tokens. Advertised as cacheable for five "
@@ -328,7 +397,14 @@ _TYPESAFE_CATALOG = Catalog(
             path=["main"],
             comment="TypeSafe question functions and the model listing — require a 'typesafe' secret",
             tags=_SCHEMA_TAGS,
-            functions=[AskFunction, ChoiceFunction, ModelsFunction],
+            functions=[
+                AskFunction,
+                ChoiceFunction,
+                NoulFunction,
+                ScoreFunction,
+                IsTrueFunction,
+                ModelsFunction,
+            ],
             # `models` is registered twice on purpose, and the two forms serve
             # the same scan. As a *function* it matches the rest of this
             # catalog, and it is what the docs and examples call. As a *table*

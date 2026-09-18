@@ -7,8 +7,9 @@
 # measured by `vgi-lint simulate` cannot read the answer key out of the very
 # worker it is querying (VGI416).
 #
-# `simulate` attaches ONLY this worker, which exposes three functions and no
-# tables. Every reference query must therefore be self-contained: supply its own
+# `simulate` attaches ONLY this worker, which exposes five table functions, one
+# scalar and no tables besides `models`. Every reference query must therefore be
+# self-contained: supply its own
 # rows with VALUES or a literal — `models()` is the one exception, because its
 # rows come from the API rather than from the query. A reference that selects
 # from a table the analyst does not have cannot run, and a grader that cannot
@@ -75,6 +76,40 @@ tasks:
     success_criteria: >-
       Uses DESCRIBE (or an equivalent bind-only inspection) to read the result shape without
       issuing a billed request, and reports one struct column per question plus usage.
+    unordered: true
+
+  - name: flag_which_messages_need_a_reply
+    reference_sql: >-
+      SELECT t.body, n.noul FROM (VALUES
+      ('My package never arrived and nobody has replied in three days'),
+      ('Thanks, just a routine question')) t(body),
+      LATERAL typesafe.main.noul(t.body,
+      instructions => 'Does this need a reply today?') n
+    success_criteria: >-
+      Uses typesafe.main.noul (or the is_true scalar) and reports the probability itself rather
+      than collapsing it to a yes/no, so the analyst can choose a cut-off afterwards.
+    unordered: true
+
+  - name: rate_severity_on_a_scale
+    reference_sql: >-
+      SELECT score, confidence FROM typesafe.main.score(
+      'The whole site is down and no orders can be placed',
+      instructions => 'How severe is this?',
+      criteria => ['minor question', 'disruptive delay', 'critical outage'])
+    success_criteria: >-
+      Uses typesafe.main.score with an ordered criteria list running lowest first, rather than a
+      choice question over unordered options, and reports the confidence alongside the score.
+    unordered: true
+
+  - name: filter_rows_by_a_yes_no_question
+    reference_sql: >-
+      SELECT t.body FROM (VALUES ('My package never arrived'),
+      ('Thanks for the quick refund')) t(body)
+      WHERE typesafe.main.is_true(t.body, 'Is this message about a lost package?') > 0.5
+    success_criteria: >-
+      Calls typesafe.main.is_true directly in the WHERE clause and compares it against a
+      threshold, rather than joining a table function in. The threshold is a judgement call and
+      any reasonable value counts.
     unordered: true
 
   - name: which_models_can_i_ask_for

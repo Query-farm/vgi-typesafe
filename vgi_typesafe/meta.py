@@ -47,6 +47,11 @@ def _sql_type(kind: pa.DataType) -> str:
         return "DOUBLE"
     if pa.types.is_int64(kind):
         return "BIGINT"
+    if pa.types.is_int32(kind):
+        # score()'s probabilities are keyed by level number, and DuckDB reads an
+        # int32 map key back as INTEGER — not BIGINT, which is what an int64 key
+        # would have made it.
+        return "INTEGER"
     if pa.types.is_string(kind) or pa.types.is_large_string(kind):
         return "VARCHAR"
     if pa.types.is_timestamp(kind):

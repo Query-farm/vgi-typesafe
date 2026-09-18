@@ -245,6 +245,160 @@ def test_ask_rejects_a_bare_scalar_state_with_a_way_out(mock: MockTypeSafeServer
 
 
 # ---------------------------------------------------------------------------
+# noul() and score(): the other two one-question shorthands
+# ---------------------------------------------------------------------------
+
+LOST_PACKAGE = "instructions => 'Is this message about a lost package?'"
+SEVERITY = (
+    "instructions => 'How severe is this?', criteria => ['minor question', 'disruptive delay', 'critical outage']"
+)
+
+
+def test_noul_answers_a_probability_per_row_under_lateral(mock: MockTypeSafeServer) -> None:
+    """The join shape this worker exists for, on the type whose answer is a bare number."""
+    rows = _rows(
+        mock,
+        f"""
+        SELECT t.id, n.noul > 0.5 AS yes
+        FROM (VALUES (1, 'My package never arrived'), (2, 'Thanks for the quick refund'),
+                     (3, NULL)) t(id, body),
+             LATERAL typesafe.main.noul(t.body, {LOST_PACKAGE}) n
+        ORDER BY t.id;
+        """,
+    )
+    assert rows == [{"id": 1, "yes": True}, {"id": 2, "yes": False}, {"id": 3, "yes": None}]
+    assert len(mock.requests) == 2, "the NULL row makes no request"
+
+
+def test_noul_declares_no_confidence_column(mock: MockTypeSafeServer) -> None:
+    """A noul answer is one number; a confidence column here would have to be invented."""
+    rows = _rows(mock, "DESCRIBE SELECT * FROM typesafe.main.noul('x', instructions => 'Is this a test?');")
+    assert {r["column_name"]: r["column_type"] for r in rows} == {
+        "noul": "DOUBLE",
+        "model": "VARCHAR",
+        "input_tokens": "BIGINT",
+        "output_tokens": "BIGINT",
+    }
+
+
+def test_noul_criteria_describe_the_two_outcomes(mock: MockTypeSafeServer) -> None:
+    """The MAP-typed named argument, and the bind check that it names only outcomes."""
+    rows = _rows(
+        mock,
+        "SELECT noul FROM typesafe.main.noul('My package never arrived', "
+        "instructions => 'Is this urgent?', "
+        "criteria => MAP {'true': 'a lost package', 'false': 'a routine question'});",
+    )
+    assert rows[0]["noul"] > 0.5
+    assert mock.requests[0]["questions"]["noul"]["criteria"] == {
+        "true": "a lost package",
+        "false": "a routine question",
+    }
+    result = _run(
+        mock,
+        "SELECT noul FROM typesafe.main.noul('x', instructions => 'Is this urgent?', "
+        "criteria => MAP {'maybe': 'who knows'});",
+    )
+    assert "'true' and 'false'" in result.stderr + result.stdout
+
+
+def test_score_places_rows_on_the_scale_in_its_declared_types(mock: MockTypeSafeServer) -> None:
+    """A LIST-typed named argument is new here, and the INTEGER-keyed MAP is what DESCRIBE must agree to."""
+    described = _rows(mock, f"DESCRIBE SELECT * FROM typesafe.main.score('x', {SEVERITY});")
+    assert {r["column_name"]: r["column_type"] for r in described} == {
+        "score": "DOUBLE",
+        "confidence": "DOUBLE",
+        "probabilities": "MAP(INTEGER, DOUBLE)",
+        "model": "VARCHAR",
+        "input_tokens": "BIGINT",
+        "output_tokens": "BIGINT",
+    }
+    rows = _rows(
+        mock,
+        f"""
+        SELECT t.id, s.score
+        FROM (VALUES (1, 'A minor question'), (2, 'A critical outage')) t(id, body),
+             LATERAL typesafe.main.score(t.body, {SEVERITY}) s
+        ORDER BY t.id;
+        """,
+    )
+    assert rows[0]["score"] < rows[1]["score"], "an ordered scale has to order the rows"
+    assert mock.requests[0]["questions"]["score"]["criteria"] == [
+        "minor question",
+        "disruptive delay",
+        "critical outage",
+    ]
+
+
+def test_score_rejects_a_scale_too_short_to_place_anything(mock: MockTypeSafeServer) -> None:
+    """Plan-time rejection, before anything is billed — production would accept it and answer 0.0."""
+    result = _run(
+        mock,
+        "SELECT * FROM typesafe.main.score('x', instructions => 'How bad?', criteria => ['only one level']);",
+    )
+    assert "lowest first" in result.stderr + result.stdout
+    assert mock.requests == []
+
+
+# ---------------------------------------------------------------------------
+# is_true(): the scalar form of a noul
+# ---------------------------------------------------------------------------
+
+
+def test_is_true_filters_rows_in_a_where_clause(mock: MockTypeSafeServer) -> None:
+    """The entire reason the scalar exists: a judgment inline in WHERE, with no join around it."""
+    rows = _rows(
+        mock,
+        """
+        SELECT t.id FROM (VALUES (1, 'My package never arrived'), (2, 'Thanks for the quick refund'),
+                                 (3, NULL)) t(id, body)
+        WHERE typesafe.main.is_true(t.body, 'Is this message about a lost package?') > 0.5
+        ORDER BY t.id;
+        """,
+    )
+    assert rows == [{"id": 1}], "the NULL row is NULL, not true, so WHERE drops it"
+    assert len(mock.requests) == 2
+
+
+def test_is_true_composes_in_case_and_order_by(mock: MockTypeSafeServer) -> None:
+    """The other expression positions the docs claim; each would need its own join otherwise."""
+    rows = _rows(
+        mock,
+        """
+        SELECT t.id, CASE WHEN typesafe.main.is_true(t.body, 'Is this message about a lost package?') > 0.5
+                          THEN 'shipping' ELSE 'other' END AS route
+        FROM (VALUES (1, 'Thanks for the quick refund'), (2, 'My package never arrived')) t(id, body)
+        ORDER BY typesafe.main.is_true(t.body, 'Is this message about a lost package?') DESC;
+        """,
+    )
+    assert rows == [{"id": 2, "route": "shipping"}, {"id": 1, "route": "other"}]
+
+
+def test_is_true_agrees_with_the_table_function_on_the_same_row(mock: MockTypeSafeServer) -> None:
+    """Two spellings of one question that disagreed would make the shorthand a trap.
+
+    This is also the proof that the scalar is shorter rather than more capable:
+    the same filter is expressible either way.
+    """
+    rows = _rows(
+        mock,
+        """
+        SELECT typesafe.main.is_true('My package never arrived', 'Is this message about a lost package?') AS scalar,
+               (SELECT noul FROM typesafe.main.noul('My package never arrived',
+                   instructions => 'Is this message about a lost package?')) AS table_function;
+        """,
+    )
+    assert rows[0]["scalar"] == rows[0]["table_function"]
+
+
+def test_is_true_rejects_a_blank_question_at_bind(mock: MockTypeSafeServer) -> None:
+    """Plan-time rejection, before anything is billed."""
+    result = _run(mock, "SELECT typesafe.main.is_true('hello', '');")
+    assert "needs a question" in result.stderr + result.stdout
+    assert mock.requests == []
+
+
+# ---------------------------------------------------------------------------
 # models(): the model listing
 # ---------------------------------------------------------------------------
 
@@ -334,11 +488,14 @@ def test_models_fails_the_query_rather_than_returning_nothing(mock: MockTypeSafe
 def _published_examples() -> list[tuple[str, str]]:
     from vgi_typesafe.ask import AskFunction
     from vgi_typesafe.choice import ChoiceFunction
+    from vgi_typesafe.is_true import IsTrueFunction
     from vgi_typesafe.models import ModelsFunction
+    from vgi_typesafe.noul import NoulFunction
+    from vgi_typesafe.score import ScoreFunction
 
     return [
         (f"{function.Meta.name}: {example.description}", example.sql)
-        for function in (AskFunction, ChoiceFunction, ModelsFunction)
+        for function in (AskFunction, ChoiceFunction, NoulFunction, ScoreFunction, IsTrueFunction, ModelsFunction)
         for example in function.Meta.examples
     ]
 

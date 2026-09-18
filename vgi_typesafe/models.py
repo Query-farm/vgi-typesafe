@@ -45,7 +45,7 @@ from vgi_typesafe.meta import docs, examples, field
 
 MODELS_SCHEMA = pa.schema(
     [
-        field("name", pa.string(), "The model id, exactly as ask() and choice() want it in `model =>`."),
+        field("name", pa.string(), "The model id, exactly as the question functions want it in `model =>`."),
         field("description", pa.string(), "TypeSafe's own description of what the model is."),
         field(
             "release_date",
@@ -86,7 +86,7 @@ class ModelsFunction(TableFunctionGenerator[None, None]):
         """Catalog metadata: name, docs, and the examples clients copy."""
 
         name = "models"
-        description = "List the TypeSafe models that ask() and choice() accept in their `model =>` argument"
+        description = "List the TypeSafe models that the question functions accept in their `model =>` argument"
         categories = ["reference"]
         required_secrets = [SecretLookupEntry(secret_type=auth.SECRET_TYPE)]
         tags = docs(
@@ -94,7 +94,7 @@ class ModelsFunction(TableFunctionGenerator[None, None]):
             result_schema=MODELS_SCHEMA,
             llm=(
                 "The list of TypeSafe models, one row each. Read it before setting `model =>` on "
-                "`ask()` or `choice()`: those default to `jev-latest`, and this is the only place "
+                "any question function: they default to `jev-latest`, and this is the only place "
                 "in SQL that says what else is accepted — a preview model is usually published "
                 "alongside the stable one. Takes no arguments and costs no tokens, so it is safe "
                 "to call for discovery. A `name` from here goes straight into `model =>`. Needs a "
@@ -103,7 +103,7 @@ class ModelsFunction(TableFunctionGenerator[None, None]):
             md=(
                 "Every model the API will accept, as rows.\n\n"
                 "### Why it is here\n\n"
-                "`ask()` and `choice()` take a `model =>` argument that defaults to `jev-latest`. "
+                "Every question function takes a `model =>` argument that defaults to `jev-latest`. "
                 "Nothing else in this catalog enumerates the alternatives, and TypeSafe publishes "
                 "a preview line (`jev-preview`) next to the stable one.\n\n"
                 "### Using a name you find here\n\n"

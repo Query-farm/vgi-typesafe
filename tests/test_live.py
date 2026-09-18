@@ -27,8 +27,12 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 
+import pyarrow as pa
 import pytest
 
+from vgi_typesafe import is_true as is_true_module
+from vgi_typesafe import noul as noul_module
+from vgi_typesafe import score as score_module
 from vgi_typesafe import typesafe_api as api
 from vgi_typesafe.auth import Credentials
 
@@ -119,6 +123,84 @@ class TestTheContractHolds:
         """
         assert answers.model != api.DEFAULT_MODEL
         assert answers.model.startswith("jev-")
+
+
+@pytest.fixture(scope="module")
+def shorthands(credentials: Credentials, client: api.httpx.Client) -> api.Response:
+    """One request carrying the exact questions ``noul()`` and ``score()`` build.
+
+    Those two functions declare *fixed* output schemas, so what production puts
+    in an answer is the contract their columns promise. Built through each
+    module's own ``question_of`` rather than by hand, so a change to how a
+    question is assembled is what gets sent here.
+    """
+    return api.ask(
+        "My package never arrived and nobody has replied in three days",
+        {
+            noul_module.QUESTION_ID: noul_module.question_of(
+                "Does this need a reply today?",
+                {"true": "angry, waiting for days", "false": "a routine question that can wait"},
+            ),
+            score_module.QUESTION_ID: score_module.question_of(
+                "How severe is this?",
+                ["minor question", "disruptive delay", "critical outage"],
+            ),
+        },
+        credentials=credentials,
+        client=client,
+    )
+
+
+class TestTheShorthandsGetWhatTheirColumnsPromise:
+    """`noul()` and `score()` declare fixed schemas, so production has to fill exactly those columns.
+
+    Every offline test of these two asserts the mock. These are the assertions
+    that would notice production adding a field, dropping one, or keying a score
+    distribution some other way — any of which would leave a declared column
+    empty or a declared type wrong for every user.
+    """
+
+    def test_a_noul_answer_is_one_number_with_nothing_beside_it(self, shorthands: api.Response) -> None:
+        """`noul()` publishes no confidence column; if production sends one, we are hiding it."""
+        assert set(shorthands.answers[noul_module.QUESTION_ID]) == {"noul"}
+        assert 0.0 <= shorthands.answers[noul_module.QUESTION_ID]["noul"] <= 1.0
+
+    def test_noul_criteria_naming_only_the_two_outcomes_are_accepted(self, shorthands: api.Response) -> None:
+        """We reject every other key at bind; this confirms we are not inventing the restriction."""
+        assert shorthands.answers[noul_module.QUESTION_ID]["noul"] > 0.5, "a three-day wait needs a reply"
+
+    def test_a_score_answer_fills_every_column_score_declares(self, shorthands: api.Response) -> None:
+        """score, confidence and a distribution keyed by level number — all three are declared columns."""
+        answer = shorthands.answers[score_module.QUESTION_ID]
+        assert 0.0 <= answer["score"] <= 2.0
+        assert 0.0 <= answer["confidence"] <= 1.0
+        # MAP(INTEGER, DOUBLE): the API keys these as strings, so every level
+        # must survive the cast, and no level may be missing.
+        assert set(answer["probabilities"]) == {0, 1, 2}
+        assert sum(answer["probabilities"].values()) == pytest.approx(1.0, abs=0.01)
+
+    def test_usage_reaches_the_flat_columns(self, shorthands: api.Response) -> None:
+        """Both functions expose model and token counts as ordinary columns rather than a struct."""
+        assert shorthands.model.startswith("jev-")
+        assert shorthands.input_tokens and shorthands.output_tokens
+
+
+def test_the_scalar_answers_a_whole_vector_in_one_pass(credentials: Credentials) -> None:
+    """`is_true()` is handed an Arrow vector and must turn it into as few requests as it can.
+
+    Offline this is asserted against the mock's request log. Here it is asserted
+    against the only thing production can show us: repeated values getting
+    byte-identical answers, which is only true if they were asked once.
+    """
+    values = pa.array(["My package never arrived", None, "My package never arrived"], type=pa.string())
+    answered = is_true_module.probabilities(
+        values,
+        instructions="Is this message about a lost package?",
+        secret={"api_key": credentials.api_key},
+    ).to_pylist()
+    assert answered[1] is None, "a NULL value is the only NULL this function may produce"
+    assert answered[0] == answered[2], "one distinct value, so one request and one shared answer"
+    assert answered[0] > 0.5
 
 
 @pytest.fixture(scope="module")
