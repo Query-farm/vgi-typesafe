@@ -298,9 +298,55 @@ class TestOverHttp:
         assert response.status_code == 404
 
 
+class TestModelsOverHttp:
+    """`GET /v1/models` — what lets models() be tested and linted with no key and no network."""
+
+    def test_the_listing_matches_production(self) -> None:
+        """Every field the worker reads, in the shape production sends; a mock that drifts lies."""
+        with running(api_key="k") as server:
+            response = httpx.get(f"{server.base_url}/v1/models", headers={"Authorization": "Bearer k"})
+        assert response.status_code == 200
+        models = response.json()["models"]
+        assert [m["name"] for m in models] == ["jev-latest", "jev-preview"]
+        assert all(set(m) == {"name", "description", "release_date"} for m in models)
+
+    def test_the_preview_model_is_served(self) -> None:
+        """models() exists because `jev-preview` is invisible from SQL; an offline test must prove it is listed."""
+        assert "jev-preview" in {model["name"] for model in mock_server.list_models()["models"]}
+
+    def test_the_listing_is_deterministic(self) -> None:
+        """Tests assert exact rows, so two calls must not differ."""
+        assert mock_server.list_models() == mock_server.list_models()
+
+    def test_a_caller_cannot_mutate_the_served_listing(self) -> None:
+        """A test that edited its response would silently corrupt every later one in the process."""
+        mock_server.list_models()["models"][0]["name"] = "tampered"
+        assert mock_server.MODELS[0]["name"] == "jev-latest"
+
+    @pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer wrong"}, {"Authorization": "k"}])
+    def test_a_bad_key_is_a_401_here_too(self, headers: dict[str, str]) -> None:
+        """Discovery must not be the one unauthenticated hole in the endpoint."""
+        with running(api_key="k") as server:
+            response = httpx.get(f"{server.base_url}/v1/models", headers=headers)
+        assert response.status_code == 401
+
+    def test_other_get_paths_are_404(self) -> None:
+        """A typo'd base_url should fail loudly on a GET exactly as it does on a POST."""
+        with running() as server:
+            response = httpx.get(f"{server.base_url}/v1/nope", headers={"Authorization": "Bearer x"})
+        assert response.status_code == 404
+
+    def test_a_get_does_not_poison_the_keep_alive_connection(self) -> None:
+        """Both verbs share one socket in practice; a half-read reply breaks the next request."""
+        with running(api_key="k") as server, httpx.Client(headers={"Authorization": "Bearer k"}) as client:
+            assert client.get(f"{server.base_url}/v1/models").status_code == 200
+            assert client.post(f"{server.base_url}/v1/systemone", json=_request()).status_code == 200
+
+
 def test_the_mock_agrees_with_the_worker_on_the_wire_contract() -> None:
     """Two copies of a constant drift; this fails the moment they do."""
     from vgi_typesafe import typesafe_api
 
     assert mock_server.SYSTEM_ONE_PATH == typesafe_api.SYSTEM_ONE_PATH
+    assert mock_server.MODELS_PATH == typesafe_api.MODELS_PATH
     assert mock_server.MAX_OPTIONS == typesafe_api.MAX_OPTIONS

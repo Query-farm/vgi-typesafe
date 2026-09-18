@@ -245,6 +245,88 @@ def test_ask_rejects_a_bare_scalar_state_with_a_way_out(mock: MockTypeSafeServer
 
 
 # ---------------------------------------------------------------------------
+# models(): the model listing
+# ---------------------------------------------------------------------------
+
+
+def test_models_lists_every_model_with_its_declared_types(mock: MockTypeSafeServer) -> None:
+    """The one function with a fixed, statically declared schema; DESCRIBE is that declaration."""
+    rows = _rows(mock, "DESCRIBE SELECT * FROM typesafe.main.models();")
+    assert {r["column_name"]: r["column_type"] for r in rows} == {
+        "name": "VARCHAR",
+        "description": "VARCHAR",
+        "release_date": "TIMESTAMP WITH TIME ZONE",
+    }
+
+
+def test_models_returns_the_preview_model_a_user_could_not_otherwise_find(mock: MockTypeSafeServer) -> None:
+    """The reason the function exists: `jev-preview` is not mentioned anywhere else in SQL."""
+    rows = _rows(mock, "SELECT name, release_date FROM typesafe.main.models() ORDER BY name;")
+    assert [r["name"] for r in rows] == ["jev-latest", "jev-preview"]
+    assert all(r["release_date"].startswith("2026-09-10") for r in rows)
+
+
+def test_a_listed_name_is_accepted_as_a_model_argument(mock: MockTypeSafeServer) -> None:
+    """Discovery is only worth shipping if what it returns is usable as another function's input."""
+    listed = {row["name"] for row in _rows(mock, "SELECT name FROM typesafe.main.models();")}
+    assert "jev-preview" in listed
+    rows = _rows(mock, f"SELECT choice FROM typesafe.main.choice('lost package', model => 'jev-preview', {QUESTION});")
+    assert rows == [{"choice": "shipping"}]
+    assert mock.requests[-1]["model"] == "jev-preview", "the listed name must reach the API unchanged"
+
+
+def test_a_model_column_cannot_be_correlated_into_a_question(mock: MockTypeSafeServer) -> None:
+    """Pins the limitation the docs warn about: `model =>` binds once, so it takes a literal.
+
+    Without this, the obvious next thing a reader tries — joining this listing
+    into `choice()` — fails with a binder error the docs never mentioned.
+    """
+    result = _run(
+        mock,
+        f"SELECT c.choice FROM typesafe.main.models() m, "
+        f"LATERAL typesafe.main.choice('lost package', model => m.name, {QUESTION}) c;",
+    )
+    assert "lateral join column parameters" in result.stderr + result.stdout
+
+
+def test_models_reads_as_a_table_as_well_as_a_function(mock: MockTypeSafeServer) -> None:
+    """One name is registered as both; DuckDB keeps them in separate catalog sets, so both must resolve.
+
+    The table form is what a parameterless listing should look like in SQL, and
+    it is what vgi-lint's VGI311 asks for. If the two ever stopped agreeing, one
+    of them would be quietly serving something else.
+    """
+    as_table = _rows(mock, "SELECT name, description FROM typesafe.main.models ORDER BY name;")
+    as_function = _rows(mock, "SELECT name, description FROM typesafe.main.models() ORDER BY name;")
+    assert as_table == as_function
+    assert [r["name"] for r in as_table] == ["jev-latest", "jev-preview"]
+    assert _rows(mock, "SELECT table_name FROM duckdb_tables() WHERE database_name = 'typesafe';") == [
+        {"table_name": "models"}
+    ]
+
+
+def test_the_models_table_declares_the_row_identity(mock: MockTypeSafeServer) -> None:
+    """An agent planning a join needs to know `name` identifies a row; nothing else in the row does."""
+    rows = _rows(mock, "DESCRIBE typesafe.main.models;")
+    by_name = {r["column_name"]: r for r in rows}
+    assert by_name["name"]["key"] == "PRI"
+    assert by_name["name"]["null"] == "NO" and by_name["description"]["null"] == "NO"
+    assert by_name["release_date"]["null"] == "YES", "the API may omit a release date"
+
+
+def test_models_takes_no_arguments(mock: MockTypeSafeServer) -> None:
+    """A stray accepted argument would be an undocumented, unimplemented knob."""
+    result = _run(mock, "SELECT * FROM typesafe.main.models('jev-latest');")
+    assert result.returncode != 0 or result.stderr.strip(), "models() should not accept an argument"
+
+
+def test_models_fails_the_query_rather_than_returning_nothing(mock: MockTypeSafeServer) -> None:
+    """Zero rows would read as "this account has no models", which is a different fact entirely."""
+    result = _run(mock, "SELECT * FROM typesafe.main.models();", api_key="wrong")
+    assert "rejected the API key" in result.stderr + result.stdout
+
+
+# ---------------------------------------------------------------------------
 # documentation is executable
 # ---------------------------------------------------------------------------
 
@@ -252,10 +334,11 @@ def test_ask_rejects_a_bare_scalar_state_with_a_way_out(mock: MockTypeSafeServer
 def _published_examples() -> list[tuple[str, str]]:
     from vgi_typesafe.ask import AskFunction
     from vgi_typesafe.choice import ChoiceFunction
+    from vgi_typesafe.models import ModelsFunction
 
     return [
         (f"{function.Meta.name}: {example.description}", example.sql)
-        for function in (AskFunction, ChoiceFunction)
+        for function in (AskFunction, ChoiceFunction, ModelsFunction)
         for example in function.Meta.examples
     ]
 

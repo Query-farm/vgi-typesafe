@@ -31,6 +31,16 @@ def comment_of(f: pa.Field[Any]) -> str:
     return ""
 
 
+def column_comments(schema: pa.Schema) -> dict[str, str]:
+    """Each documented column paired with its comment, for a ``Table`` descriptor.
+
+    A table declares its columns to DuckDB directly rather than through
+    ``vgi.result_columns_schema``, so the comments written once on the Arrow
+    schema are handed over here instead.
+    """
+    return {f.name: comment_of(f) for f in schema if comment_of(f)}
+
+
 def _sql_type(kind: pa.DataType) -> str:
     """Render an Arrow type as the DuckDB type name a consumer will actually see."""
     if pa.types.is_float64(kind):
@@ -39,6 +49,10 @@ def _sql_type(kind: pa.DataType) -> str:
         return "BIGINT"
     if pa.types.is_string(kind) or pa.types.is_large_string(kind):
         return "VARCHAR"
+    if pa.types.is_timestamp(kind):
+        # A zoned Arrow timestamp is DuckDB's TIMESTAMP WITH TIME ZONE, which is
+        # what DESCRIBE prints and therefore what vgi-lint compares against.
+        return "TIMESTAMP WITH TIME ZONE" if kind.tz else "TIMESTAMP"
     if pa.types.is_map(kind):
         return f"MAP({_sql_type(kind.key_type)}, {_sql_type(kind.item_type)})"
     raise ValueError(f"no DuckDB type mapping for {kind}")

@@ -19,6 +19,9 @@
              instructions => 'Which team should handle this?',
              criteria => MAP {'shipping': '...', 'billing': '...'}) c;
 
+    -- what may go in `model =>`
+    SELECT name, description, release_date FROM typesafe.main.models();
+
 Function names are bare (``ask``, not ``typesafe_ask``) because they are already
 qualified by the catalog they live in.
 """
@@ -29,20 +32,21 @@ import json
 import sys
 
 from vgi import Worker
-from vgi.catalog import Catalog, ReadOnlyCatalogInterface, Schema
+from vgi.catalog import Catalog, ReadOnlyCatalogInterface, Schema, Table
 from vgi.catalog.catalog_interface import CatalogInfo
 
 from vgi_typesafe import __version__, auth
 from vgi_typesafe.ask import AskFunction
 from vgi_typesafe.choice import ChoiceFunction
-from vgi_typesafe.meta import examples, keywords
+from vgi_typesafe.meta import column_comments, docs, examples, keywords
+from vgi_typesafe.models import MODELS_SCHEMA, ModelsFunction
 
 IMPLEMENTATION_VERSION = __version__
 DATA_VERSION_SPEC = f"=={__version__}"
 SOURCE_URL = "https://github.com/Query-farm/vgi-typesafe"
 
 _KEYWORDS = keywords(
-    "typesafe", "system one", "classification", "choice", "noul", "score", "routing", "confidence", "jev"
+    "typesafe", "system one", "classification", "choice", "noul", "score", "routing", "confidence", "jev", "models"
 )
 
 _CATEGORIES = json.dumps(
@@ -55,7 +59,16 @@ _CATEGORIES = json.dumps(
                 "ordered scale — each with a calibrated confidence."
             ),
             "keywords": ["classify", "route", "score", "flag", "confidence"],
-        }
+        },
+        {
+            "name": "reference",
+            "title": "Reference & Discovery",
+            "description": (
+                "What the account can ask for — the models a question may name, listed from SQL "
+                "instead of from TypeSafe's documentation."
+            ),
+            "keywords": ["models", "discovery", "catalog", "reference"],
+        },
     ]
 )
 
@@ -102,6 +115,13 @@ _AGENT_TEST_TASKS = json.dumps(
             "prompt": (
                 "Before I run this against real data: what columns and types come back if I ask a "
                 "choice question and a yes/no question about the same row?"
+            ),
+        },
+        {
+            "name": "which_models_can_i_ask_for",
+            "prompt": (
+                "I do not want to be stuck on whatever model is the default. Which models can I "
+                "actually name here, and when was each one published?"
             ),
         },
     ]
@@ -173,7 +193,8 @@ _CATALOG_TAGS = {
         "LLM, it answers a typed question about a piece of content and returns a value software "
         "can consume directly. Reach for this catalog to classify rows of a table into a fixed set "
         "of options — ticket routing, intent detection, content labelling — and get a calibrated "
-        "confidence with each answer. Requires a `typesafe` secret holding an API key."
+        "confidence with each answer. `models()` lists the models a question may name. Requires a "
+        "`typesafe` secret holding an API key."
     ),
     "vgi.doc_md": (
         "TypeSafe evaluates typed questions against a *state* (the content to judge) and returns "
@@ -183,9 +204,11 @@ _CATALOG_TAGS = {
         "row, returning one typed `STRUCT` column per question. Three question types: `choice` "
         "(pick one option), `noul` (a yes/no probability) and `score` (a position on an ordered "
         "scale). The state can be a string, a struct, a list, or the whole row.\n"
-        "- `choice()` — the one-question shorthand, with flat output columns.\n\n"
-        "Both are blended table functions, so they compose under a correlated `LATERAL` to "
-        "judge a whole table in one query.\n\n"
+        "- `choice()` — the one-question shorthand, with flat output columns.\n"
+        "- `models()` — the models either of them will accept in `model =>`, with no arguments "
+        "and no token cost.\n\n"
+        "The two question functions are blended table functions, so they compose under a "
+        "correlated `LATERAL` to judge a whole table in one query.\n\n"
         "### Authentication\n\n"
         "The key is redacted in `duckdb_secrets()`. The optional `base_url` field points the "
         "worker at another endpoint, such as the bundled mock server "
@@ -220,29 +243,82 @@ _SCHEMA_TAGS = {
             "instructions => 'Which team should handle this?', "
             "criteria => MAP {'shipping': 'Lost packages', 'billing': 'Invoices'})",
         ),
+        (
+            "List the models a question may name",
+            "SELECT name, description, release_date FROM typesafe.main.models() ORDER BY name",
+        ),
     ),
     "vgi.doc_llm": (
-        "Both functions in this schema turn one row into a typed judgment. Reach for `ask()` when "
+        "Two of the three functions here turn one row into a typed judgment. Reach for `ask()` when "
         "you want several judgments about the same row — it sends one request per row no matter "
         "how many questions you attach, and returns one `STRUCT` column per question. Reach for "
         "`choice()` when you want exactly one option picked from a set and prefer flat columns. "
         "Both take the content as their first argument, so they compose under a correlated LATERAL "
-        "to judge a whole table. Every answer carries a confidence you can filter on."
+        "to judge a whole table. Every answer carries a confidence you can filter on. The third, "
+        "`models()`, takes no arguments and lists what either will accept in `model =>`."
     ),
     "vgi.doc_md": (
-        "Two table functions over TypeSafe's System One models.\n\n"
+        "Three table functions over TypeSafe's System One models.\n\n"
         "### Which to use\n\n"
         "- `ask()` — any number of questions per row (`choice`, `noul`, `score`), one request per "
         "row, one typed `STRUCT` column per question plus a `usage` column.\n"
-        "- `choice()` — the one-question shorthand, returning flat columns.\n\n"
+        "- `choice()` — the one-question shorthand, returning flat columns.\n"
+        "- `models()` — no arguments, no token cost: the models `model =>` will accept.\n\n"
         "### Shared behaviour\n\n"
-        "Both are blended table functions: one registration serves a literal call, an implicit "
-        "lateral and an explicit one alike — see this schema's example queries for each shape. "
-        "Both produce exactly one output row per input row, "
+        "The two question functions are blended table functions: one registration serves a literal "
+        "call, an implicit lateral and an explicit one alike — see this schema's example queries "
+        "for each shape. Both produce exactly one output row per input row, "
         "skip the request entirely for a NULL input, ask once for repeated inputs within a batch, "
-        "and raise on an API error rather than degrading to NULL. Both need a `typesafe` secret."
+        "and raise on an API error rather than degrading to NULL. All three need a `typesafe` "
+        "secret."
     ),
 }
+
+_MODEL_KEYWORDS = keywords("models", "model", "jev", "jev-latest", "jev-preview", "versions", "discovery")
+
+#: Documentation for the `models` TABLE. It scans the same function and returns
+#: the same rows, so the prose differs only where the two forms do: this one
+#: reads without parentheses, which is what a parameterless listing should look
+#: like in SQL. `vgi.result_columns_schema` is deliberately absent — a table
+#: declares its columns to DuckDB directly, and that tag is function-scoped.
+_MODELS_TABLE_DOCS = docs(
+    category="reference",
+    llm=(
+        "Every TypeSafe model this key may name, as a plain table — the same rows `models()` "
+        "returns, without the parentheses. Read it before setting `model =>` on `ask()` or "
+        "`choice()`: those default to `jev-latest`, and this is the only place in SQL that says "
+        "what else is accepted. Scanning it calls the API but bills no tokens."
+    ),
+    md=(
+        "The model catalog, readable as a table.\n\n"
+        "This table and the `models()` function are the same scan, returning the same rows. The "
+        "table form exists because a listing that takes no arguments reads better without "
+        "parentheses:\n\n"
+        "```sql\n"
+        "SELECT name, description, release_date FROM typesafe.main.models ORDER BY name;\n"
+        "```\n\n"
+        "### Using a name you find here\n\n"
+        "`model =>` is a bind-time argument on `ask()` and `choice()`, so it takes a literal: "
+        "paste the `name` into the call rather than joining this table into it.\n\n"
+        "### Cost and freshness\n\n"
+        "A `GET` that judges nothing and bills no tokens. Advertised as cacheable for five "
+        "minutes, so repeated scans in one session cost one request."
+    ),
+    example_queries=examples(
+        (
+            "List every model without parentheses",
+            "SELECT name, description, release_date FROM typesafe.main.models ORDER BY name",
+        ),
+        (
+            "Which models are previews rather than the stable line",
+            "SELECT name, release_date FROM typesafe.main.models WHERE name LIKE '%preview%' ORDER BY name",
+        ),
+    ),
+    # A table is faceted and searched like a table, not like a function: the
+    # same provider/domain pair the catalog and schema carry, plus its own
+    # search terms.
+    extra={"provider": "typesafe", "domain": "ai-classification", "vgi.keywords": _MODEL_KEYWORDS},
+)
 
 _TYPESAFE_CATALOG = Catalog(
     name="typesafe",
@@ -253,9 +329,37 @@ _TYPESAFE_CATALOG = Catalog(
     schemas=[
         Schema(
             path=["main"],
-            comment="TypeSafe question functions — require a 'typesafe' secret",
+            comment="TypeSafe question functions and the model listing — require a 'typesafe' secret",
             tags=_SCHEMA_TAGS,
-            functions=[AskFunction, ChoiceFunction],
+            functions=[AskFunction, ChoiceFunction, ModelsFunction],
+            # `models` is registered twice on purpose, and the two forms serve
+            # the same scan. As a *function* it matches the rest of this
+            # catalog, and it is what the docs and examples call. As a *table*
+            # it reads the way parameterless reference data should — `SELECT *
+            # FROM typesafe.main.models`, no parentheses — which is what
+            # vgi-lint's VGI311 asks for. DuckDB keeps tables and table
+            # functions in separate catalog sets, so one name can be both;
+            # tests/test_end_to_end.py pins that both resolve and agree.
+            tables=[
+                Table(
+                    name="models",
+                    function=ModelsFunction,
+                    comment="The TypeSafe models a question may name (small, slow-changing reference data)",
+                    tags=_MODELS_TABLE_DOCS,
+                    column_comments=column_comments(MODELS_SCHEMA),
+                    # A model id is the row's identity — it is what `model =>`
+                    # takes, so two rows sharing one would make the listing
+                    # useless. `_parse_model` refuses a nameless model, and a
+                    # description missing upstream is read as an empty one, so
+                    # neither column can arrive NULL.
+                    primary_key=(("name",),),
+                    not_null=("name", "description"),
+                    # Two rows today, and every model TypeSafe has ever
+                    # published is still listed. An estimate that is wrong by a
+                    # few still beats the planner assuming a scan of unknown size.
+                    cardinality_estimate=8,
+                ),
+            ],
         ),
     ],
 )

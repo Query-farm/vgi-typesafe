@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -13,6 +14,7 @@ import pytest
 from vgi_typesafe import typesafe_api as api
 from vgi_typesafe.auth import Credentials
 from vgi_typesafe.mock_server import handle
+from vgi_typesafe.mock_server import list_models as mock_list_models
 
 CREDENTIALS = Credentials(api_key="secret-key", base_url="http://typesafe.test")
 CRITERIA = {"shipping": "Delivery status, lost packages", "billing": "Charges, invoices"}
@@ -386,3 +388,111 @@ class TestAskMany:
         """A response we cannot read is an error, not an empty result."""
         with pytest.raises(api.TypeSafeError, match="no 'answers'"):
             _ask_many(_client(lambda request: httpx.Response(200, json={"model": "m"})), ["x"])
+
+
+def _models_backend(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json=mock_list_models())
+
+
+class TestListModels:
+    """`GET /v1/models` — the other endpoint, sharing this module's one request path."""
+
+    def test_request_matches_the_api_reference(self) -> None:
+        """A GET with a body, or without the Bearer header, is a different request than documented."""
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return _models_backend(request)
+
+        api.list_models(credentials=CREDENTIALS, client=_client(handler))
+
+        (request,) = seen
+        assert request.method == "GET"
+        assert str(request.url) == "http://typesafe.test/v1/models"
+        assert request.headers["authorization"] == "Bearer secret-key"
+        assert request.content == b"", "a GET must not carry a JSON body"
+
+    def test_every_field_survives_the_round_trip(self) -> None:
+        """These three fields are the function's entire output; a dropped one is an empty column."""
+        models = api.list_models(credentials=CREDENTIALS, client=_client(_models_backend))
+        assert [m.name for m in models] == ["jev-latest", "jev-preview"]
+        assert all(m.description for m in models)
+        assert models[0].release_date == datetime(2026, 9, 10, 18, 38, 1, 391457, tzinfo=UTC)
+
+    def test_the_apis_own_order_is_preserved(self) -> None:
+        """Sorting here would silently override an ORDER BY-free query's ordering."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"models": [{"name": "z-model"}, {"name": "a-model"}]})
+
+        assert [m.name for m in api.list_models(credentials=CREDENTIALS, client=_client(handler))] == [
+            "z-model",
+            "a-model",
+        ]
+
+    def test_a_missing_description_is_an_empty_one_not_a_failure(self) -> None:
+        """A model with no blurb is still a model you can name in `model =>`."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"models": [{"name": "jev-x"}]})
+
+        (model,) = api.list_models(credentials=CREDENTIALS, client=_client(handler))
+        assert model.description == "" and model.release_date is None
+
+    @pytest.mark.parametrize("raw", ["", "not a date", "2026-13-45", None, 17])
+    def test_an_unreadable_release_date_costs_one_cell_not_the_listing(self, raw: Any) -> None:
+        """Losing every model because one timestamp is odd would defeat the point of the call."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"models": [{"name": "jev-x", "release_date": raw}]})
+
+        (model,) = api.list_models(credentials=CREDENTIALS, client=_client(handler))
+        assert model.name == "jev-x" and model.release_date is None
+
+    def test_a_naive_timestamp_is_read_as_utc(self) -> None:
+        """The column is TIMESTAMP WITH TIME ZONE; a naive value must not become local time."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"models": [{"name": "jev-x", "release_date": "2026-09-10T18:38:01"}]})
+
+        (model,) = api.list_models(credentials=CREDENTIALS, client=_client(handler))
+        assert model.release_date == datetime(2026, 9, 10, 18, 38, 1, tzinfo=UTC)
+
+    @pytest.mark.parametrize(
+        ("body", "fragment"),
+        [
+            ({"model": "jev-latest"}, "no 'models'"),
+            ({"models": {"jev-latest": {}}}, "no 'models'"),
+            ({"models": ["jev-latest"]}, "not an object"),
+            ({"models": [{"description": "no name"}]}, "no 'name'"),
+            ({"models": [{"name": "  "}]}, "no 'name'"),
+        ],
+    )
+    def test_a_malformed_listing_raises_rather_than_returning_nothing(self, body: Any, fragment: str) -> None:
+        """An empty result would read as "this account has no models", which is a different fact."""
+        with pytest.raises(api.TypeSafeError, match=fragment):
+            api.list_models(credentials=CREDENTIALS, client=_client(lambda request: httpx.Response(200, json=body)))
+
+    def test_it_shares_the_retry_policy_rather_than_reimplementing_it(self, _no_sleep: list[float]) -> None:
+        """Discovery failing differently from the calls it informs is the bug this guards."""
+        attempts: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts.append(1)
+            return httpx.Response(429) if len(attempts) < 3 else _models_backend(request)
+
+        models = api.list_models(credentials=CREDENTIALS, client=_client(handler))
+        assert len(models) == 2 and len(attempts) == 3
+        assert _no_sleep, "a retried GET must back off, exactly as a retried POST does"
+
+    def test_a_rejected_key_is_named_the_same_way(self) -> None:
+        """One error vocabulary across both endpoints; a user should not have to learn two."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, json={"detail": "invalid or missing API key"})
+
+        with pytest.raises(api.TypeSafeError, match="rejected the API key") as excinfo:
+            api.list_models(credentials=CREDENTIALS, client=_client(handler))
+        assert excinfo.value.status == 401
+        assert "secret-key" not in str(excinfo.value)

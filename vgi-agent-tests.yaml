@@ -7,11 +7,12 @@
 # measured by `vgi-lint simulate` cannot read the answer key out of the very
 # worker it is querying (VGI416).
 #
-# `simulate` attaches ONLY this worker, which exposes two functions and no
+# `simulate` attaches ONLY this worker, which exposes three functions and no
 # tables. Every reference query must therefore be self-contained: supply its own
-# rows with VALUES or a literal. A reference that selects from a table the
-# analyst does not have cannot run, and a grader that cannot run grades nothing.
-# tests/test_examples.py executes every one of these.
+# rows with VALUES or a literal — `models()` is the one exception, because its
+# rows come from the API rather than from the query. A reference that selects
+# from a table the analyst does not have cannot run, and a grader that cannot
+# run grades nothing. tests/test_examples.py executes every one of these.
 tasks:
   - name: route_a_support_ticket
     reference_sql: >-
@@ -74,4 +75,12 @@ tasks:
     success_criteria: >-
       Uses DESCRIBE (or an equivalent bind-only inspection) to read the result shape without
       issuing a billed request, and reports one struct column per question plus usage.
+    unordered: true
+
+  - name: which_models_can_i_ask_for
+    reference_sql: >-
+      SELECT name, description, release_date FROM typesafe.main.models() ORDER BY name
+    success_criteria: >-
+      Calls typesafe.main.models() rather than guessing model names or quoting documentation,
+      and reports each model's name together with its release date.
     unordered: true

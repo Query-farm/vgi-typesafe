@@ -1,6 +1,6 @@
 # Copyright 2026 Query Farm LLC - https://query.farm
 
-"""A mocked TypeSafe endpoint: ``POST /v1/systemone`` — choice, noul and score.
+"""A mocked TypeSafe endpoint: ``POST /v1/systemone`` and ``GET /v1/models``.
 
 It speaks the real wire format — Bearer auth, the ``state``/``model``/``questions``
 request, the ``answers``/``usage`` response, 401 and 422 errors — so the worker
@@ -13,7 +13,9 @@ is keyword overlap between the state and the question's text:
 * noul   — hits against the instructions (and the ``true`` criterion) push
   toward 1, hits against the ``false`` criterion push toward 0.
 
-That is deterministic, which is the point — tests can assert exact answers.
+That is deterministic, which is the point — tests can assert exact answers. So
+is ``GET /v1/models``: a fixed list, mirroring production's, so ``models()`` can
+be tested and linted offline and without a key.
 
     uv run vgi-typesafe-mock --port 8787 --api-key test-key
 
@@ -35,6 +37,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 SYSTEM_ONE_PATH = "/v1/systemone"
+MODELS_PATH = "/v1/models"
 MAX_OPTIONS = 255
 MIN_SCORE_LEVELS = 2
 MAX_SCORE_LEVELS = 10
@@ -202,6 +205,30 @@ def resolve_model(model: str) -> str:
     return RESOLVED_MODEL if model.endswith("-latest") else model
 
 
+#: What ``GET /v1/models`` answers with: the two models production listed when
+#: this was written, copied verbatim including their release timestamps. Fixed
+#: rather than generated, because the point of the mock is that a test can
+#: assert exact rows — and because `jev-preview` existing at all is the reason
+#: ``models()`` exists, so it must be here for an offline test to prove it.
+MODELS: list[dict[str, str]] = [
+    {
+        "name": "jev-latest",
+        "description": "The latest iteration of TypeSafe's System One Model: Jev",
+        "release_date": "2026-09-10T18:38:01.391457+00:00",
+    },
+    {
+        "name": "jev-preview",
+        "description": "A preview version of `jev-latest`: should be better in most ways",
+        "release_date": "2026-09-10T18:39:06.057655+00:00",
+    },
+]
+
+
+def list_models() -> dict[str, Any]:
+    """The decoded body of one ``GET /v1/models``, as production shapes it."""
+    return {"models": [dict(model) for model in MODELS]}
+
+
 def handle(body: Any) -> dict[str, Any]:
     """Answer one decoded System One request. Raises :class:`RequestInvalid`."""
     state, model, questions = _validate(body)
@@ -262,6 +289,21 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _authorized(self) -> bool:
+        """Whether the Bearer token is one this server accepts."""
+        scheme, _, token = (self.headers.get("Authorization") or "").partition(" ")
+        expected = self.server.api_key
+        return scheme.lower() == "bearer" and bool(token.strip()) and (not expected or token.strip() == expected)
+
+    def do_GET(self) -> None:  # noqa: N802 - http.server's naming
+        if self.path.rstrip("/") != MODELS_PATH:
+            self._send(404, {"detail": f"no such endpoint: {self.path}"})
+            return
+        if not self._authorized():
+            self._send(401, {"detail": "invalid or missing API key"})
+            return
+        self._send(200, list_models())
+
     def do_POST(self) -> None:  # noqa: N802 - http.server's naming
         # Drain the body before any early reply, or a keep-alive client sees
         # its unread bytes parsed as the next request.
@@ -271,9 +313,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(404, {"detail": f"no such endpoint: {self.path}"})
             return
 
-        scheme, _, token = (self.headers.get("Authorization") or "").partition(" ")
-        expected = self.server.api_key
-        if scheme.lower() != "bearer" or not token.strip() or (expected and token.strip() != expected):
+        if not self._authorized():
             self._send(401, {"detail": "invalid or missing API key"})
             return
 
@@ -309,13 +349,16 @@ def running(api_key: str | None = None, port: int = 0) -> Iterator[MockTypeSafeS
 
 def main() -> None:
     """Run the mock endpoint in the foreground."""
-    parser = argparse.ArgumentParser(description="Mock TypeSafe /v1/systemone endpoint (choice, noul and score)")
+    parser = argparse.ArgumentParser(description="Mock TypeSafe endpoint: /v1/systemone and /v1/models")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--api-key", default=None, help="require this exact key (default: accept any)")
     args = parser.parse_args()
     server = MockTypeSafeServer((args.host, args.port), api_key=args.api_key)
-    print(f"mock TypeSafe endpoint listening on {server.base_url}{SYSTEM_ONE_PATH}", flush=True)
+    print(
+        f"mock TypeSafe endpoint listening on {server.base_url}, serving {SYSTEM_ONE_PATH} and {MODELS_PATH}",
+        flush=True,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

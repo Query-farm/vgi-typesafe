@@ -121,6 +121,71 @@ class TestTheContractHolds:
         assert answers.model.startswith("jev-")
 
 
+@pytest.fixture(scope="module")
+def models(credentials: Credentials, client: api.httpx.Client) -> list[api.Model]:
+    """The live model listing, fetched once for the module. A GET costs no tokens."""
+    return api.list_models(credentials=credentials, client=client)
+
+
+class TestTheModelListingIsWhatWePublish:
+    """`models()` claims a fixed schema and a fixed set of rows; only production can confirm it.
+
+    The mock serves a copy of this listing, so every other test of `models()`
+    asserts our own transcription. These are the assertions that would notice
+    TypeSafe renaming a field, dropping the preview line, or changing the
+    timestamp format. A GET costs no tokens, so this is the one place in this
+    file where extra requests are affordable.
+    """
+
+    def test_the_listing_is_not_empty(self, models: list[api.Model]) -> None:
+        """An empty result would make the function useless and would not fail any offline test."""
+        assert models
+
+    def test_every_row_has_the_three_columns_we_expose(self, models: list[api.Model]) -> None:
+        """These are `models()`'s entire output, declared statically in vgi.result_columns_schema."""
+        assert all(model.name.strip() for model in models)
+        assert all(model.description.strip() for model in models)
+        assert all(model.release_date is not None for model in models)
+
+    def test_release_dates_are_timezone_aware(self, models: list[api.Model]) -> None:
+        """The column is TIMESTAMP WITH TIME ZONE; a naive value there would be a silent offset."""
+        assert all(model.release_date is not None and model.release_date.tzinfo is not None for model in models)
+
+    def test_the_default_model_is_one_of_the_listed_names(self, models: list[api.Model]) -> None:
+        """`model =>` defaults to DEFAULT_MODEL, so the listing has to contain it or the docs lie."""
+        assert api.DEFAULT_MODEL in {model.name for model in models}
+
+    def test_the_mock_serves_the_same_shape(self, models: list[api.Model]) -> None:
+        """Every offline test of models() asserts the mock; this is what keeps the mock honest."""
+        from vgi_typesafe.mock_server import MODELS
+
+        assert {key for model in MODELS for key in model} == {"name", "description", "release_date"}
+        assert {model["name"] for model in MODELS} <= {model.name for model in models}
+
+    def test_a_listed_name_is_accepted_as_a_model(
+        self, models: list[api.Model], credentials: Credentials, client: api.httpx.Client
+    ) -> None:
+        """A name the listing publishes but a request rejects would make discovery actively misleading."""
+        preview = next((m.name for m in models if m.name != api.DEFAULT_MODEL), api.DEFAULT_MODEL)
+        response = api.ask(
+            "hello",
+            {"q": {"type": "noul", "instructions": "Is this a greeting?"}},
+            credentials=credentials,
+            client=client,
+            model=preview,
+        )
+        assert 0.0 <= response.answers["q"]["noul"] <= 1.0
+
+    def test_a_bad_key_is_rejected_here_too(self, client: api.httpx.Client) -> None:
+        """Discovery must not be an unauthenticated side door, and must name the failure our way."""
+        bad = Credentials(api_key="ts-definitely-not-a-real-key")
+        with pytest.raises(api.TypeSafeError) as excinfo:
+            api.list_models(credentials=bad, client=client)
+        assert excinfo.value.status == 401
+        assert "rejected the API key" in str(excinfo.value)
+        assert "ts-definitely-not-a-real-key" not in str(excinfo.value)
+
+
 class TestTheModelIsUsable:
     """Not "is the model correct" — that is TypeSafe's job — but "is it usable from SQL"."""
 

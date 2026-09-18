@@ -1,6 +1,6 @@
 # Copyright 2026 Query Farm LLC - https://query.farm
 
-"""The one place this worker talks HTTP: ``POST /v1/systemone``.
+"""The one place this worker talks HTTP: ``POST /v1/systemone`` and ``GET /v1/models``.
 
 A System One request carries a single ``state`` and a map of named questions,
 all answered in parallel by the API. So however many questions a row asks, it
@@ -11,6 +11,12 @@ Three question types exist: ``choice`` (pick one option), ``noul`` (a yes/no
 probability) and ``score`` (a position on an ordered scale). :func:`ask_many` is
 the general path; :func:`ask_choices` is the one-question shorthand ``choice()``
 uses, and rides on it.
+
+``GET /v1/models`` is the other endpoint: the catalog of models a key may name
+in a request. It carries no state and costs no tokens, and :func:`list_models`
+reads it through the same :func:`_request` — same Bearer header, same retry
+policy, same errors — because a discovery call that fails differently from the
+calls it is meant to inform is worse than no discovery call.
 
 Failure policy: 408, 429 and every 5xx (which includes 529, "overloaded") are
 retried with jittered exponential backoff, honouring the server's own
@@ -29,6 +35,7 @@ import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -37,6 +44,7 @@ from vgi_typesafe import __version__
 from vgi_typesafe.auth import Credentials
 
 SYSTEM_ONE_PATH = "/v1/systemone"
+MODELS_PATH = "/v1/models"
 DEFAULT_MODEL = "jev-latest"
 #: Matches the official SDK's per-operation default.
 DEFAULT_TIMEOUT = 10.0
@@ -114,6 +122,21 @@ class ChoiceAnswer:
     output_tokens: int | None
 
 
+@dataclass(slots=True, frozen=True)
+class Model:
+    """One model the API offers — the shape ``models()`` consumes.
+
+    ``release_date`` is None when the API omitted it or sent something that is
+    not a timestamp: a model you can still name in ``model =>`` is useful
+    without knowing the day it shipped, so an unreadable date costs that one
+    cell rather than the whole listing.
+    """
+
+    name: str
+    description: str
+    release_date: datetime | None
+
+
 def open_client(timeout: float = DEFAULT_TIMEOUT) -> httpx.Client:
     """A client for one batch of requests. Safe to share across threads."""
     return httpx.Client(timeout=timeout, headers={"User-Agent": f"vgi-typesafe/{__version__}"})
@@ -185,13 +208,40 @@ def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
     return float(delay * (1.0 - random.random() * BACKOFF_JITTER))
 
 
-def _post(client: httpx.Client, credentials: Credentials, payload: dict[str, Any]) -> dict[str, Any]:
-    url = f"{credentials.base_url}{SYSTEM_ONE_PATH}"
+def _request(
+    client: httpx.Client,
+    credentials: Credentials,
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Issue one authenticated request under the retry policy, decoded as an object.
+
+    Every endpoint this worker touches shares the auth header, the backoff and
+    the error vocabulary, so they share this. ``payload`` is omitted entirely
+    for a body-less method such as GET.
+
+    Args:
+        client: The HTTP client to issue on; safe to share across threads.
+        credentials: The API key, and the base URL to send it to.
+        method: The HTTP method, e.g. ``"POST"`` or ``"GET"``.
+        path: The endpoint path below the base URL.
+        payload: The JSON request body, or None for a request that has none.
+
+    Returns:
+        The decoded JSON object the endpoint answered with.
+
+    Raises:
+        TypeSafeError: The endpoint was unreachable after every attempt, answered
+            with an error status, or answered with something that is not a JSON
+            object.
+    """
+    url = f"{credentials.base_url}{path}"
     headers = {"Authorization": f"Bearer {credentials.api_key}"}
     for attempt in range(MAX_ATTEMPTS):
         last = attempt == MAX_ATTEMPTS - 1
         try:
-            response = client.post(url, json=payload, headers=headers)
+            response = client.request(method, url, json=payload, headers=headers)
         except httpx.HTTPError as exc:
             # A dropped connection or a read timeout is transient in exactly the
             # way a 503 is; the SDK retries these too. Only give up on the last
@@ -270,7 +320,7 @@ def ask(
 ) -> Response:
     """Ask every question about one state — a single request."""
     payload = {"state": state, "model": model, "questions": {k: dict(v) for k, v in questions.items()}}
-    body = _post(client, credentials, payload)
+    body = _request(client, credentials, "POST", SYSTEM_ONE_PATH, payload)
     raw_answers = body.get("answers")
     if not isinstance(raw_answers, dict):
         raise TypeSafeError(f"TypeSafe response has no 'answers': {str(body)[:300]}")
@@ -360,3 +410,77 @@ def ask_choices(
             )
         out.append(converted[id(response)])
     return out
+
+
+def _release_date(raw: Any) -> datetime | None:
+    """Parse a model's ``release_date`` into an aware datetime, or None.
+
+    The API sends RFC 3339 with an explicit offset
+    (``2026-09-10T18:38:01.391457+00:00``). A naive value is read as UTC, which
+    is what every timestamp this API has ever sent has been; anything
+    unparseable becomes None rather than failing the listing.
+
+    Args:
+        raw: The ``release_date`` field exactly as the API sent it.
+
+    Returns:
+        The release instant, or None when there was not a readable one.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.strip())
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _parse_model(entry: Any) -> Model:
+    """Validate and normalise one entry of the ``models`` array.
+
+    Args:
+        entry: One element of the response's ``models`` array.
+
+    Returns:
+        The model, with a missing description read as an empty one.
+
+    Raises:
+        TypeSafeError: The entry is not an object, or names no model — either
+            way there is nothing a caller could pass to ``model =>``.
+    """
+    if not isinstance(entry, dict):
+        raise TypeSafeError(f"TypeSafe listed a model that is not an object: {str(entry)[:300]}")
+    name = str(entry.get("name") or "").strip()
+    if not name:
+        raise TypeSafeError(f"TypeSafe listed a model with no 'name': {str(entry)[:300]}")
+    description = entry.get("description")
+    return Model(
+        name=name,
+        description="" if description is None else str(description),
+        release_date=_release_date(entry.get("release_date")),
+    )
+
+
+def list_models(*, credentials: Credentials, client: httpx.Client) -> list[Model]:
+    """Every model this key may name, in the order the API lists them.
+
+    A GET that carries no state: it costs no tokens, and the order is the API's
+    own rather than one invented here, so a caller who wants another sorts in
+    SQL.
+
+    Args:
+        credentials: The API key, and the base URL to send it to.
+        client: The HTTP client to issue the request on.
+
+    Returns:
+        One :class:`Model` per listed model.
+
+    Raises:
+        TypeSafeError: The response carries no ``models`` array. An empty query
+            result would be indistinguishable from an account with no models.
+    """
+    body = _request(client, credentials, "GET", MODELS_PATH)
+    listed = body.get("models")
+    if not isinstance(listed, list):
+        raise TypeSafeError(f"TypeSafe response has no 'models': {str(body)[:300]}")
+    return [_parse_model(entry) for entry in listed]

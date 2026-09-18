@@ -28,10 +28,14 @@ from vgi_typesafe import worker as worker_module
 from vgi_typesafe.ask import AskFunction
 from vgi_typesafe.choice import ChoiceFunction
 from vgi_typesafe.mock_server import MockTypeSafeServer, running
+from vgi_typesafe.models import ModelsFunction
 
 pytestmark = pytest.mark.e2e
 
-FUNCTIONS = (AskFunction, ChoiceFunction)
+FUNCTIONS = (AskFunction, ChoiceFunction, ModelsFunction)
+#: Tables are a carrier too: `models` is exposed as one as well as a function,
+#: and its examples use the no-parentheses form, which no function example can.
+TABLES = tuple(table for schema in worker_module._TYPESAFE_CATALOG.schemas for table in schema.tables)
 
 
 def _agent_graders() -> list[dict[str, str]]:
@@ -77,6 +81,9 @@ def _published_sql() -> list[tuple[str, str]]:
             found.append((f"{name} Meta.examples: {example.description}", example.sql))
         for entry in json.loads(function.Meta.tags["vgi.example_queries"]):
             found.append((f"{name} vgi.example_queries: {entry['description']}", entry["sql"]))
+    for table in TABLES:
+        for entry in json.loads(table.tags["vgi.example_queries"]):
+            found.append((f"{table.name} table vgi.example_queries: {entry['description']}", entry["sql"]))
     for entry in json.loads(worker_module._SCHEMA_TAGS["vgi.example_queries"]):
         found.append((f"schema vgi.example_queries: {entry['description']}", entry["sql"]))
     for entry in json.loads(worker_module._EXECUTABLE_EXAMPLES):

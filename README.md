@@ -1,8 +1,29 @@
-# vgi-typesafe
+<p align="center">
+  <a href="https://query.farm/vgi/">
+    <img src="https://raw.githubusercontent.com/Query-farm/vgi-typesafe/main/docs/vgi-logo.png" alt="Vector Gateway Interface logo" width="320">
+  </a>
+</p>
 
-A [VGI](https://query.farm/vgi/) worker that exposes [TypeSafe](https://docs.typesafe.ai/introduction)
-System One questions — **choice**, **noul** and **score** — to DuckDB as table-in-out functions you can
-`LATERAL` join against.
+<h1 align="center">vgi-typesafe</h1>
+
+<p align="center">
+  <a href="https://docs.typesafe.ai/introduction">TypeSafe</a> System One questions — <strong>choice</strong>,<br>
+  <strong>noul</strong> and <strong>score</strong> — as DuckDB table functions you can <code>LATERAL</code> join against.<br>
+  A <strong>read-only</strong> <a href="https://query.farm/vgi/">VGI</a> worker, built by <a href="https://query.farm">🚜 Query.Farm</a>
+</p>
+
+<p align="center">
+  <a href="https://query.farm"><img src="https://query.farm/Query_Farm_Logo_Transparent.png" alt="Query.Farm" width="200"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Query-farm/vgi-typesafe/actions/workflows/ci.yml"><img src="https://github.com/Query-farm/vgi-typesafe/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/python-3.13%2B-blue.svg" alt="Python 3.13+">
+  <a href="https://query.farm/vgi/"><img src="https://img.shields.io/badge/VGI-Vector%20Gateway%20Interface-2f7d32.svg" alt="VGI"></a>
+</p>
+
+---
 
 ```sql
 -- The entry script carries a PEP-723 header, so `uv run` resolves its
@@ -29,10 +50,10 @@ WHERE a.dept.confidence > 0.8;
 | --- | --- |
 | [`ask()`](#askstate-questions--) | Any number of questions per row, any mix of types, structured state. |
 | [`choice()`](#choicestate-instructions--criteria---model--concurrency-) | The one-question shorthand, with flat output columns. |
+| [`models()`](#models) | Which models `model =>` will accept. No arguments, no tokens. |
 
-Both are *blended* table-in-out functions (`RowTransformFunction` in vgi-python): the positional argument
-**is** the per-row input column, so one registration serves a literal call, `FROM t, f(t.x)` and
-`LATERAL f(t.x)` alike.
+For `ask()` and `choice()` the first argument **is** the per-row input, so the same call works on a
+literal, on `FROM t, f(t.x)`, and on `LATERAL f(t.x)` alike. `models()` takes no input at all.
 
 ## `ask(state, questions => ...)`
 
@@ -123,6 +144,34 @@ Behaviour worth knowing:
   be silently wrong. `429` and `529` are retried with exponential backoff (honouring `Retry-After`) first.
 - `instructions` and `criteria` are validated at bind, so a malformed question fails before any row is sent.
 
+## `models()`
+
+`ask()` and `choice()` both take `model =>` and default it to `jev-latest`. Nothing else in the catalog
+says what else is allowed — and TypeSafe publishes a preview line alongside the stable one, so the
+default is not the only answer.
+
+```sql
+SELECT name, description, release_date FROM typesafe.main.models ORDER BY name;
+-- jev-latest   The latest iteration of TypeSafe's System One Model: Jev       2026-09-10 18:38:01+00
+-- jev-preview  A preview version of `jev-latest`: should be better in most ways  2026-09-10 18:39:06+00
+```
+
+| Output column | Type | |
+| --- | --- | --- |
+| `name` | `VARCHAR` | The model id, exactly as `model =>` wants it. Primary key. |
+| `description` | `VARCHAR` | TypeSafe's own description. |
+| `release_date` | `TIMESTAMP WITH TIME ZONE` | When it was published; `NULL` if the API did not say. |
+
+Readable as a table (`typesafe.main.models`) or as a function (`typesafe.main.models()`) — same rows
+either way. A listing that takes no arguments simply reads better without the parentheses.
+
+- It **judges nothing and bills no tokens**, so it is safe to call for discovery.
+- Results are cacheable for **5 minutes**, so repeated calls in one session cost one request.
+- A rejected key or an unreachable endpoint **raises**. Zero rows would read as "this account has no
+  models", which is a different fact.
+- `model =>` is fixed when the query is planned, so it takes a literal: paste a `name` from here into
+  the call rather than joining this listing into it.
+
 ## API key
 
 The key is a DuckDB secret, so it never appears in query text or `duckdb_databases()`, and
@@ -130,19 +179,25 @@ The key is a DuckDB secret, so it never appears in query text or `duckdb_databas
 
 ```sql
 CREATE SECRET (TYPE typesafe, api_key 'ts-...');
--- optionally: base_url 'http://127.0.0.1:8787'
+-- optionally: base_url '...' to target a non-production endpoint
 ```
 
 With no secret, the worker falls back to `TYPESAFE_API_KEY` / `TYPESAFE_BASE_URL` in its environment — the
 same names the official TypeSafe SDKs read. With neither, the query fails with a message saying how to fix it.
 
-## The mocked endpoint
+## Development
 
-`vgi_typesafe/mock_server.py` implements `POST /v1/systemone` for all three question types with the real
-wire format: Bearer auth (401), request validation (422), and the `answers` / `usage` response. In place
-of a model it uses keyword overlap between the state and the question's text — options and score levels
-are scored then softmaxed; a noul moves toward 1 on hits against its instructions and `true` criterion and
-toward 0 on hits against `false`. Deterministic, so tests can assert exact answers. Stdlib only.
+```sh
+uv sync --all-extras          # creates .venv; dependencies come from PyPI
+uv run pytest                 # the full suite: hermetic, no network and no key needed
+uv run ruff check . && uv run ruff format --check .
+uv run mypy vgi_typesafe/     # strict
+
+TYPESAFE_API_KEY=... uv run pytest -m live   # the only tests that call the real API
+```
+
+The suite runs against a bundled endpoint that speaks TypeSafe's wire format, so it needs neither a
+key nor a network. Start it by hand to point a DuckDB session at it:
 
 ```sh
 uv run vgi-typesafe-mock --port 8787 --api-key test-key
@@ -152,113 +207,21 @@ uv run vgi-typesafe-mock --port 8787 --api-key test-key
 CREATE SECRET (TYPE typesafe, api_key 'test-key', base_url 'http://127.0.0.1:8787');
 ```
 
-## Development
-
-```sh
-uv sync --all-extras          # creates .venv; dependencies come from PyPI
-uv run pytest                 # everything, hermetic — no network, no real key
-uv run ruff check . && uv run ruff format --check .
-uv run mypy vgi_typesafe/     # strict
-```
-
 Ruff, mypy and pydoclint settings are mirrored from
-[vgi-python](https://github.com/Query-farm/vgi-python) so the fleet lints identically: 120-column
+[vgi-python](https://github.com/Query-farm/vgi-python), so the fleet lints identically: 120-column
 lines, Google-style docstrings enforced on tests as well as the package, and mypy `strict`.
-pydoclint runs inside the suite (`tests/test_docstrings.py`) rather than as a separate gate — it
-cannot be a project dependency, because it pulls `docstring-parser-fork`, which clobbers
-`vgi-rpc`'s `docstring-parser` in the shared `docstring_parser` import namespace.
 
-`pyproject.toml` deliberately carries **no `[tool.uv.sources]`**. A local path pin
-(`vgi-python = { path = "../vgi-python" }`) makes the project installable only on a machine that
-has that sibling checkout — CI, and everyone else, cannot sync it. To develop against a local
-framework, `uv pip install -e ../vgi-python` into the venv instead of committing the pin.
+## Where we are stricter than the API
 
-### Catalog metadata
-
-The worker is linted by [vgi-lint-check](https://github.com/Query-farm/vgi-lint-check), which
-checks that the catalog documents itself well enough for an agent to use it:
-
-```sh
-# Point the worker at the bundled mock so no example is billed, then run BOTH tiers.
-uv run vgi-typesafe-mock --port 8787 --api-key k &
-TYPESAFE_API_KEY=k TYPESAFE_BASE_URL=http://127.0.0.1:8787 \
-  uvx --from vgi-lint-check vgi-lint lint --execute --audit-waivers --no-check-links
-# 100/100, 0 findings, Assurance L2 behavioural
-```
-
-CI runs the **behavioural** tier (`--execute`), not just the structural one — it attaches the
-worker and runs the shipped examples, which is the only way a declared result schema gets checked
-against what a function actually returns. Running it against the mock keeps it free and keyless.
-Settings live in `vgi-lint.toml`, including one documented waiver: `ask()` names its result columns
-after the caller's own questions, so no fixed variant table can enumerate them (`--audit-waivers`
-fails if that waiver ever stops buying anything).
-
-`vgi.agent_test_tasks` publishes only each task's `{name, prompt}`. The graders live in
-`vgi-agent-tests.yaml`, outside the catalog, so an agent being measured by `vgi-lint simulate`
-cannot read the answer key out of the worker it is querying.
-
-### CI
-
-| Job | Gates |
-| --- | --- |
-| Lint, types, offline tests | ruff check, ruff format, mypy strict, pytest, and both entry points run with `--no-project` from a scratch directory |
-| Catalog metadata | `vgi-lint` structural tier, failing on warning |
-
-The entry-point step is the one the other 200-odd tests structurally cannot be: they all run from
-inside a synced venv at the project root, which is exactly where a broken entry script still works.
-
-## License
-
-MIT — see [LICENSE](LICENSE). Worker © 2026 Query Farm LLC. Judgments are produced by TypeSafe's
-System One models and are subject to TypeSafe's terms of use.
-
-| Tests | |
-| --- | --- |
-| `test_mock_server.py` | The mock's scoring for each question type, validation, and HTTP behaviour. |
-| `test_typesafe_api.py` | Wire format, answer parsing, retries, errors, de-duplication (`httpx.MockTransport`). |
-| `test_auth.py` | Secret / environment key resolution and redaction. |
-| `test_ask_logic.py` | `ask()`'s rules: question validation messages, state → JSON conversion, output shape. |
-| `test_ask_function.py`, `test_choice_function.py` | The worker as a subprocess over the real VGI protocol, against the mock. |
-| `test_end_to_end.py` | Real SQL — `ATTACH`, `CREATE SECRET`, `LATERAL`, whole-row state — against the mock. |
-| `test_live.py` | The only tests that hit the real API. Deselected by default. |
-
-```sh
-TYPESAFE_API_KEY=... uv run pytest -m live
-```
-
-Everything except `test_live.py` asserts the **mock's** behaviour, which makes the mock both the thing
-under test and the thing defining correct. The live lane is what closes that loop, and it has already
-earned it: the mock echoed the requested model (`jev-latest`) where production resolves the alias to a
-concrete version (`jev-1.13.0`), and six offline tests had pinned the echo as if it were the API's
-behaviour. It runs on a schedule rather than per-push — a change on TypeSafe's side does not arrive
-with our commits — and `concurrency: typesafe-live` keeps two runs from sharing one rate limit.
-
-### Where we are stricter than the API
-
-Production is laxer than its own reference in two places. We follow the reference, and `test_live.py`
-records both so the gap stays a decision rather than an oversight:
+Production is laxer than its own reference in two places. We follow the reference, and record both
+here so the gap stays a decision rather than a surprise:
 
 | | Documented | Production actually | We |
 | --- | --- | --- | --- |
 | `score` levels | 2–10 | accepts 1 (and scores every row `0.0`) | reject at bind |
 | `noul` `instructions` | required | optional if `criteria` is given | require it |
 
-The end-to-end tests drive the `haybarn` shell built from `../vgi` (`../vgi/build/release/haybarn`); set
-`HAYBARN` to use another binary. They skip if none is found. `ask()`'s structured state needs a vgi
-extension that accepts ANY-typed blended input columns (Query-farm/vgi `d39ca9e` or later).
+## License
 
-## Layout
-
-```
-typesafe_worker.py        stdio entry point (the ATTACH LOCATION), PEP-723 self-resolving
-serve.py                  HTTP entry point (uv run serve.py --port 8000)
-vgi-agent-tests.yaml      private graders for the published agent test tasks
-vgi_typesafe/
-  ask.py                  ask(): several questions per row, structured state
-  choice.py               choice(): the one-question shorthand
-  typesafe_api.py         the only HTTP: POST /v1/systemone, answer parsing, retries, batching
-  auth.py                 the `typesafe` secret type and key resolution
-  mock_server.py          the mocked endpoint
-  worker.py               catalog + Worker
-  meta.py                 vgi.* documentation-tag helpers
-```
+MIT — see [LICENSE](LICENSE). Worker © 2026 Query Farm LLC. Judgments are produced by TypeSafe's
+System One models and are subject to TypeSafe's terms of use.
