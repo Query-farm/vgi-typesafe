@@ -367,6 +367,65 @@ Ruff, mypy and pydoclint settings are mirrored from
 [vgi-python](https://github.com/Query-farm/vgi-python), so the fleet lints identically: 120-column
 lines, Google-style docstrings enforced on tests as well as the package, and mypy `strict`.
 
+### Tests
+
+464 offline tests and 26 live ones. Everything except `test_live.py` runs against the bundled
+endpoint, so the default suite needs no key and no network.
+
+| File | |
+| --- | --- |
+| `test_mock_server.py` | The bundled endpoint's scoring for each question type, its validation, and its HTTP behaviour. |
+| `test_typesafe_api.py` | Wire format, answer parsing, retries, errors, and per-batch de-duplication. |
+| `test_auth.py` | Secret and environment key resolution, and redaction. |
+| `test_ask_logic.py`, `test_ask_dynamic_logic.py` | The validation rules, as messages a user will actually read. |
+| `test_ask_function.py`, `test_ask_dynamic_function.py`, `test_choice_function.py`, `test_noul_function.py`, `test_score_function.py`, `test_is_true_function.py`, `test_models_function.py` | Each function driven over the real VGI protocol, worker in a subprocess. |
+| `test_end_to_end.py` | Real SQL: `ATTACH`, `CREATE SECRET`, `LATERAL`, whole-row state. |
+| `test_examples.py` | Executes **every** example this worker publishes, from all five carriers. |
+| `test_packaging.py` | That the project installs and runs for someone who is not us. |
+| `test_docstrings.py` | The pydoclint gate, run inside the suite. |
+| `test_live.py` | The only tests that call the real API. Deselected by default. |
+
+`test_live.py` exists because every other test asserts the *bundled endpoint's* behaviour, which
+makes it both the thing under test and the definition of correct. It has already earned that: the
+endpoint echoed the requested model where production resolves `jev-latest` to a concrete version,
+and six offline tests had pinned the echo as if it were the API's behaviour.
+
+### Catalog metadata
+
+The catalog is linted by [vgi-lint-check](https://github.com/Query-farm/vgi-lint-check), which
+checks that this worker documents itself well enough for an agent to use it without reading the
+source:
+
+```sh
+uv run vgi-typesafe-mock --port 8787 --api-key k &
+TYPESAFE_API_KEY=k TYPESAFE_BASE_URL=http://127.0.0.1:8787 \
+  uvx --from vgi-lint-check vgi-lint lint --execute --audit-waivers --no-check-links
+# 100/100, 0 findings, Assurance L2 behavioural
+```
+
+Pointing the worker at the bundled endpoint makes the `--execute` tier free and keyless — it
+attaches the worker and runs the shipped examples, which is the only way a declared result schema
+gets checked against what a function really returns.
+
+`vgi-lint.toml` holds the settings and one waiver: `ask()` names its result columns after the
+caller's own questions, so no fixed variant table can enumerate them. `--audit-waivers` re-runs the
+waived rule and fails if it ever stops buying anything.
+
+`vgi.agent_test_tasks` publishes only each task's `{name, prompt}`. The graders live in
+`vgi-agent-tests.yaml`, outside the catalog, so an agent being measured by `vgi-lint simulate`
+cannot read the answer key out of the worker it is querying.
+
+### CI
+
+| Job | Gates |
+| --- | --- |
+| Lint, types, offline tests | ruff, ruff format, mypy strict, pytest, and both entry points started with `--no-project` from a scratch directory |
+| Catalog metadata | `vgi-lint` structural **and** behavioural tiers, against the bundled endpoint |
+| Live API (scheduled) | `pytest -m live` against production, serialised so two runs never share one rate limit |
+
+The entry-point step is the one the other 460-odd tests structurally cannot be: they all run from
+inside a synced venv at the project root, which is exactly where a broken entry script still works.
+
 ### Layout
 
 One module per published function, plus the four they all share.
