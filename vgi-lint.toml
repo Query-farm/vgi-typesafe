@@ -31,3 +31,11 @@ fail_on = "warning"
 "typesafe.main.ask" = { ignore = [
   { code = "VGI910", kind = "domain-exemption", reason = "result column NAMES are the caller's question keys, so no fixed variant table can enumerate them; the per-type STRUCT shapes are declared and are pinned by DESCRIBE tests" },
 ] }
+
+[options]
+# `criteria` is a MAP for a choice (option -> when it applies) and an ordered
+# LIST for a score (the scale, lowest first). That is not drift we introduced —
+# it is how TypeSafe's own API defines the two question types, and collapsing
+# them to one SQL type would misrepresent the upstream contract. The concept is
+# genuinely "the criteria for THIS question type", not one shared shape.
+type_consistency_ignore_names = ["criteria"]
