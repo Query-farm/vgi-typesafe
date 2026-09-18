@@ -390,6 +390,81 @@ class TestAskMany:
             _ask_many(_client(lambda request: httpx.Response(200, json={"model": "m"})), ["x"])
 
 
+ONE_NOUL: dict[str, dict[str, Any]] = {"angry": {"type": "noul", "instructions": "Is the customer angry?"}}
+
+
+class TestAskPairs:
+    """De-duplication keyed on the (state, questions) pair, which `ask_dynamic()` needs and `ask_many` cannot do.
+
+    `ask_many` keys a batch on the state alone, which is correct only because
+    every row asks the same thing. Once the questions vary per row that
+    assumption silently answers one row with another row's question, so these
+    pin the pair — and pin that `ask_many` still rides on the same path rather
+    than growing a second one.
+    """
+
+    def _calls(self, pairs: list[api.Pair | None], **kwargs: Any) -> tuple[list[Any], list[api.Response | None]]:
+        seen: list[Any] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content))
+            return _mock_backend(request)
+
+        responses = api.ask_pairs(pairs, credentials=CREDENTIALS, client=_client(handler), **kwargs)
+        return seen, responses
+
+    def test_one_state_asked_two_things_is_two_requests(self) -> None:
+        """The case that makes state-only de-duplication wrong: one answer would be lost entirely."""
+        seen, responses = self._calls([("lost package", QUESTIONS), ("lost package", ONE_NOUL)])
+        # Requests go out concurrently, so compare the set of bodies, not their order.
+        assert sorted(tuple(sorted(call["questions"])) for call in seen) == sorted(
+            [tuple(sorted(QUESTIONS)), ("angry",)]
+        )
+        assert responses[0] is not responses[1]
+
+    def test_the_same_pair_twice_is_one_request_and_one_shared_answer(self) -> None:
+        """Sharing the object, not just the value, is what keeps a repeated pair from being billed twice."""
+        seen, responses = self._calls([("lost package", ONE_NOUL), ("lost package", ONE_NOUL)])
+        assert len(seen) == 1
+        assert responses[0] is responses[1]
+
+    def test_question_order_does_not_split_a_pair(self) -> None:
+        """The API keys its answers by name, so a reordered map is the same request and must be billed once."""
+        reversed_questions = dict(reversed(list(QUESTIONS.items())))
+        seen, _ = self._calls([("lost package", QUESTIONS), ("lost package", reversed_questions)])
+        assert len(seen) == 1
+
+    def test_state_key_order_does_not_split_a_pair(self) -> None:
+        """`ask_many` already promised this for states; routing through pairs must not quietly drop it."""
+        seen, _ = self._calls([({"a": 1, "b": 2}, ONE_NOUL), ({"b": 2, "a": 1}, ONE_NOUL)])
+        assert len(seen) == 1
+
+    def test_a_none_entry_makes_no_request_and_answers_none(self) -> None:
+        """The row-level NULL state, expressed where the batching happens rather than at each caller."""
+        seen, responses = self._calls([None, ("lost package", ONE_NOUL), None])
+        assert len(seen) == 1
+        assert [r is None for r in responses] == [True, False, True]
+
+    def test_an_entirely_empty_batch_issues_nothing(self) -> None:
+        """An all-NULL batch must succeed without credentials, so it must not reach the client at all."""
+        seen, responses = self._calls([None, None])
+        assert seen == [] and responses == [None, None]
+
+    def test_ask_many_is_this_function_with_one_question_map(self) -> None:
+        """One batching and retry path, or the two would drift apart exactly where money is spent."""
+        seen: list[Any] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content))
+            return _mock_backend(request)
+
+        client = _client(handler)
+        many = api.ask_many(["lost package", None], ONE_NOUL, credentials=CREDENTIALS, client=client)
+        pairs = api.ask_pairs([("lost package", ONE_NOUL), None], credentials=CREDENTIALS, client=client)
+        assert [r is None for r in many] == [r is None for r in pairs]
+        assert seen[0] == seen[1], "the same body either way"
+
+
 def _models_backend(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json=mock_list_models())
 

@@ -162,64 +162,69 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def _question(name: str, raw: Any) -> dict[str, Any]:
+def _question(name: str, raw: Any, origin: str) -> dict[str, Any]:
     if not isinstance(raw, dict):
-        raise ValueError(f"ask(): question {name!r} must be a struct with 'type' and 'instructions'")
+        raise ValueError(f"{origin}: question {name!r} must be a struct with 'type' and 'instructions'")
     unknown = set(raw) - {"type", "instructions", "criteria"}
     if unknown:
         raise ValueError(
-            f"ask(): question {name!r} has unknown field(s) {', '.join(sorted(unknown))}; "
+            f"{origin}: question {name!r} has unknown field(s) {', '.join(sorted(unknown))}; "
             "expected 'type', 'instructions', 'criteria'"
         )
     kind = str(raw.get("type") or "").strip().lower()
     if kind not in api.QUESTION_TYPES:
         raise ValueError(
-            f"ask(): question {name!r} has type {raw.get('type')!r}; expected one of {', '.join(api.QUESTION_TYPES)}"
+            f"{origin}: question {name!r} has type {raw.get('type')!r}; expected one of {', '.join(api.QUESTION_TYPES)}"
         )
     # TypeSafe accepts a string, an object or an array here, for every question
     # type — a structured instruction is how you give the model a rubric rather
     # than a sentence. Only emptiness is an error.
     instructions = raw.get("instructions")
     if instructions is None or (isinstance(instructions, str) and not instructions.strip()):
-        raise ValueError(f"ask(): question {name!r} requires 'instructions'")
+        raise ValueError(f"{origin}: question {name!r} requires 'instructions'")
     question: dict[str, Any] = {"type": kind, "instructions": instructions}
     criteria = raw.get("criteria")
 
     if kind == "choice":
         if not isinstance(criteria, dict) or not criteria:
             raise ValueError(
-                f"ask(): choice question {name!r} requires 'criteria': a struct or MAP of option -> description"
+                f"{origin}: choice question {name!r} requires 'criteria': a struct or MAP of option -> description"
             )
         if len(criteria) > api.MAX_OPTIONS:
-            raise ValueError(f"ask(): choice question {name!r} has more than {api.MAX_OPTIONS} options")
+            raise ValueError(f"{origin}: choice question {name!r} has more than {api.MAX_OPTIONS} options")
         if any(not option.strip() for option in criteria):
-            raise ValueError(f"ask(): choice question {name!r} has a blank option name")
+            raise ValueError(f"{origin}: choice question {name!r} has a blank option name")
         question["criteria"] = criteria
     elif kind == "score":
         levels = api.MIN_SCORE_LEVELS, api.MAX_SCORE_LEVELS
         if not isinstance(criteria, list) or not levels[0] <= len(criteria) <= levels[1]:
             raise ValueError(
-                f"ask(): score question {name!r} requires 'criteria': an ordered list of "
+                f"{origin}: score question {name!r} requires 'criteria': an ordered list of "
                 f"{levels[0]}-{levels[1]} level descriptions, lowest first"
             )
         question["criteria"] = criteria
     elif criteria is not None:
         if not isinstance(criteria, dict) or set(criteria) - {"true", "false"}:
             raise ValueError(
-                f"ask(): noul question {name!r} takes optional 'criteria' with only 'true' and 'false' keys"
+                f"{origin}: noul question {name!r} takes optional 'criteria' with only 'true' and 'false' keys"
             )
         if criteria:
             question["criteria"] = criteria
     return question
 
 
-def questions_of(raw: Any) -> dict[str, dict[str, Any]]:
-    """Normalise and validate the ``questions`` argument.
+def questions_of(raw: Any, *, origin: str = "ask()", reserved: str | None = USAGE_COLUMN) -> dict[str, dict[str, Any]]:
+    """Normalise and validate a ``questions`` value.
 
     Args:
-        raw: The argument as DuckDB delivered it — a struct literal, a MAP's
+        raw: The value as DuckDB delivered it — a struct literal, a MAP's
             ``(key, value)`` pairs, a JSON string, or an ANY-typed wrapper
             around any of those.
+        origin: The function name every message is prefixed with. ``ask()`` and
+            ``ask_dynamic()`` share these rules, so they share the messages, and
+            a user must still be told which one they called.
+        reserved: A name no question may take because the function already
+            spends it on an output column, or None when it spends none.
 
     Returns:
         Each question keyed by name, in the order given, with its type
@@ -234,26 +239,26 @@ def questions_of(raw: Any) -> dict[str, dict[str, Any]]:
         try:
             value = json.loads(value)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"ask(): 'questions' is a string but not valid JSON: {exc}") from exc
+            raise ValueError(f"{origin}: 'questions' is a string but not valid JSON: {exc}") from exc
     value = _plain(value)
     if not isinstance(value, dict) or not value:
         raise ValueError(
-            "ask() requires 'questions': a struct keyed by question name, e.g. "
-            "questions => {'spam': {'type': 'noul', 'instructions': 'Is this spam?'}}"
+            f"{origin} requires 'questions': a struct keyed by question name, e.g. "
+            "{'spam': {'type': 'noul', 'instructions': 'Is this spam?'}}"
         )
     questions: dict[str, dict[str, Any]] = {}
     seen: set[str] = set()
     for name, body in value.items():
         if not name.strip():
-            raise ValueError("ask(): a question has a blank name")
+            raise ValueError(f"{origin}: a question has a blank name")
         # Question names become column names, which DuckDB compares case-insensitively.
         folded = name.lower()
-        if folded == USAGE_COLUMN:
-            raise ValueError(f"ask(): a question may not be named {USAGE_COLUMN!r}; that column reports token usage")
+        if reserved is not None and folded == reserved:
+            raise ValueError(f"{origin}: a question may not be named {reserved!r}; that output column is taken")
         if folded in seen:
-            raise ValueError(f"ask(): question name {name!r} is repeated (names are case-insensitive)")
+            raise ValueError(f"{origin}: question name {name!r} is repeated (names are case-insensitive)")
         seen.add(folded)
-        questions[name] = _question(name, body)
+        questions[name] = _question(name, body, origin)
     return questions
 
 
@@ -279,13 +284,13 @@ def _is_text(kind: pa.DataType) -> bool:
     return pa.types.is_string(kind) or pa.types.is_large_string(kind)
 
 
-def check_state_type(kind: pa.DataType, *, parse_json: bool) -> None:
+def check_state_type(kind: pa.DataType, *, parse_json: bool, origin: str = "ask()") -> None:
     """Reject a state column the API has no representation for, at bind."""
     if parse_json and not _is_text(kind):
-        raise ValueError(f"ask(): parse_json => true needs a VARCHAR or JSON state, not {kind}")
+        raise ValueError(f"{origin}: parse_json => true needs a VARCHAR or JSON state, not {kind}")
     if not (_is_text(kind) or _is_structured(kind)):
         raise ValueError(
-            f"ask(): state must be VARCHAR, STRUCT, LIST or MAP, not {kind}; "
+            f"{origin}: state must be VARCHAR, STRUCT, LIST or MAP, not {kind}; "
             "cast it to VARCHAR, or wrap it in a struct such as {'value': x}"
         )
 

@@ -7,7 +7,7 @@
 # measured by `vgi-lint simulate` cannot read the answer key out of the very
 # worker it is querying (VGI416).
 #
-# `simulate` attaches ONLY this worker, which exposes five table functions, one
+# `simulate` attaches ONLY this worker, which exposes six table functions, one
 # scalar and no tables besides `models`. Every reference query must therefore be
 # self-contained: supply its own
 # rows with VALUES or a literal — `models()` is the one exception, because its
@@ -41,6 +41,25 @@ tasks:
     success_criteria: >-
       Uses a SINGLE typesafe.main.ask call carrying all three questions rather than three separate
       calls, and reads each answer out of its own struct column.
+    unordered: true
+
+  - name: ask_each_row_its_own_question
+    reference_sql: >-
+      SELECT t.id, a.answers->'dept'->>'choice' AS dept, a.answers->'urgent'->>'noul' AS urgent
+      FROM (VALUES (1, 'My package is lost and delivery is delayed',
+      '{"dept": {"type": "choice", "instructions": "Which team should handle this?",
+      "criteria": {"shipping": "Delivery status, delays, lost packages",
+      "billing": "Charges, invoices, payment problems"}}}'),
+      (2, 'Thanks, just one routine question',
+      '{"urgent": {"type": "noul", "instructions": "Does this need a reply today?"}}'))
+      t(id, body, questions),
+      LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a
+      ORDER BY t.id
+    success_criteria: >-
+      Uses typesafe.main.ask_dynamic with the questions arriving as a per-row column rather than
+      one fixed set for the whole query, and reads the wanted value out of the JSON answers column
+      with DuckDB's JSON operators. A single typesafe.main.ask call cannot satisfy this, because
+      its questions are fixed when the query is planned.
     unordered: true
 
   - name: route_only_the_confident_ones

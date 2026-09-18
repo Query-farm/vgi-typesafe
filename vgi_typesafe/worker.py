@@ -12,6 +12,11 @@
              'dept':   {'type': 'choice', 'instructions': '...', 'criteria': {...}},
              'urgent': {'type': 'noul',   'instructions': '...'}}) a;
 
+    -- questions that differ per row: both arguments are input columns, so the
+    -- answers can only come back as JSON
+    SELECT t.id, a.answers->'dept'->>'choice'
+    FROM queue t, LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a;
+
     -- the one-question shorthands, one per question type
     SELECT t.id, c.choice, c.confidence
     FROM tickets t,
@@ -47,6 +52,7 @@ from vgi.catalog.catalog_interface import CatalogInfo
 
 from vgi_typesafe import __version__, auth
 from vgi_typesafe.ask import AskFunction
+from vgi_typesafe.ask_dynamic import AskDynamicFunction
 from vgi_typesafe.choice import ChoiceFunction
 from vgi_typesafe.is_true import IsTrueFunction
 from vgi_typesafe.meta import column_comments, docs, examples, keywords
@@ -116,6 +122,15 @@ _AGENT_TEST_TASKS = json.dumps(
                 "I want three things at once: which team should handle it, whether the customer "
                 "sounds angry, and how severe it is on a three-point scale. Do it without paying "
                 "for three separate API calls."
+            ),
+        },
+        {
+            "name": "ask_each_row_its_own_question",
+            "prompt": (
+                "My queue stores the question it wants asked alongside each row, and they are not "
+                "all the same kind of question — one row wants its ticket routed to a team, the "
+                "next wants a yes/no. I cannot hard-code one fixed set of questions for the whole "
+                "query. How do I ask each row the question it carries, and read the answers back?"
             ),
         },
         {
@@ -268,10 +283,10 @@ _CATALOG_TAGS = {
         "worker at another endpoint, such as the bundled mock server "
         "(`uv run vgi-typesafe-mock`). See a question function's examples for the statement.\n\n"
         "### Cost\n\n"
-        "One API request per distinct state per input batch, however many questions that state "
-        "carries — so asking five things about a row costs the same as asking one. Requests "
-        "within a batch run concurrently; rate-limit and overload responses are retried with "
-        "backoff."
+        "One API request per distinct piece of work in an input batch — a state together with the "
+        "questions asked of it — however many questions that is, so asking five things about a row "
+        "costs the same as asking one. Requests within a batch run concurrently; rate-limit and "
+        "overload responses are retried with backoff."
     ),
 }
 
@@ -331,6 +346,10 @@ _SCHEMA_TAGS = {
         "judgment and flat columns rather than a `STRUCT` to unpack. Reach for the scalar when "
         "the judgment is a yes/no probability you want to drop straight into a predicate: it is "
         "the same request either way, so this is about how the SQL reads, not what is possible.\n\n"
+        "One form goes further and takes the questions themselves as a per-row column, so different "
+        "rows can be asked different things. It pays for that by returning its answers as JSON "
+        "rather than as typed columns, which makes it the one to reach for last — and only when the "
+        "questions genuinely vary.\n\n"
         "### What they share\n\n"
         "All of them take the content as their first argument, which makes them blended table "
         "functions: one registration serves a literal call, an implicit lateral and an explicit "
@@ -339,9 +358,10 @@ _SCHEMA_TAGS = {
         "failure raises rather than quietly becoming NULL, which would be indistinguishable from "
         "a NULL input.\n\n"
         "### Before you spend anything\n\n"
-        "A question is validated when the query is planned, so a malformed one fails before a "
-        "single row is billed. `DESCRIBE` a call to see its result columns without issuing a "
-        "request at all."
+        "A question written as a plan-time argument is validated when the query is planned, so a "
+        "malformed one fails before a single row is billed. A question that arrives as data can "
+        "only be checked as each row is read, and its errors say which row. `DESCRIBE` a call to "
+        "see its result columns without issuing a request at all."
     ),
 }
 
@@ -401,6 +421,7 @@ _TYPESAFE_CATALOG = Catalog(
             tags=_SCHEMA_TAGS,
             functions=[
                 AskFunction,
+                AskDynamicFunction,
                 ChoiceFunction,
                 NoulFunction,
                 ScoreFunction,

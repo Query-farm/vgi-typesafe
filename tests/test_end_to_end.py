@@ -245,6 +245,152 @@ def test_ask_rejects_a_bare_scalar_state_with_a_way_out(mock: MockTypeSafeServer
 
 
 # ---------------------------------------------------------------------------
+# ask_dynamic(): questions that differ from row to row
+# ---------------------------------------------------------------------------
+
+DEPT_JSON = (
+    '{"dept": {"type": "choice", "instructions": "Which team should handle this?", '
+    '"criteria": {"shipping": "Delivery status, delays, lost packages", '
+    '"billing": "Charges, invoices, payment problems"}}}'
+)
+URGENT_JSON = '{"urgent": {"type": "noul", "instructions": "Does this need a reply today?"}}'
+
+
+def test_ask_dynamic_asks_each_row_the_questions_that_row_carries(mock: MockTypeSafeServer) -> None:
+    """A JSON column of questions is the form the docs recommend, and the reason this function exists.
+
+    Nothing here is expressible with ask(), whose questions are fixed when the
+    query is planned — and the extraction is the other half of the contract: the
+    answers are only useful if DuckDB's JSON functions can reach into them.
+    """
+    rows = _rows(
+        mock,
+        f"""
+        SELECT t.id,
+               a.answers->'dept'->>'choice' AS dept,
+               (a.answers->'urgent'->>'noul')::DOUBLE > 0.5 AS urgent
+        FROM (VALUES (1, 'My package is lost and delivery is delayed', '{DEPT_JSON}'),
+                     (2, 'Thanks, just one routine question', '{URGENT_JSON}'),
+                     (3, NULL, NULL)) t(id, body, questions),
+             LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a
+        ORDER BY t.id;
+        """,
+    )
+    assert rows == [
+        {"id": 1, "dept": "shipping", "urgent": None},
+        {"id": 2, "dept": None, "urgent": False},
+        {"id": 3, "dept": None, "urgent": None},
+    ]
+    assert len(mock.requests) == 2, "the NULL row makes no request and never looks at its questions"
+    # Requests are issued concurrently, so their order is not the input's.
+    assert sorted(tuple(request["questions"]) for request in mock.requests) == [("dept",), ("urgent",)]
+
+
+def test_ask_dynamic_takes_heterogeneous_questions_from_a_struct_column(mock: MockTypeSafeServer) -> None:
+    """The other accepted form, and the one with a trap: DuckDB unifies the column's type across rows.
+
+    Each row therefore arrives carrying the other row's question as NULL. If that
+    padding reached the API, every row would be billed for — and answered with —
+    a question it never asked.
+    """
+    rows = _rows(
+        mock,
+        """
+        SELECT t.id, a.answers
+        FROM (VALUES (1, 'My package is lost', {'dept': {'type': 'choice', 'instructions': 'Which team?',
+                          'criteria': {'shipping': 'Lost packages', 'billing': 'Invoices'}}}),
+                     (2, 'Thanks', {'urgent': {'type': 'noul', 'instructions': 'Does this need a reply today?',
+                          'criteria': NULL}})) t(id, body, questions),
+             LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a
+        ORDER BY t.id;
+        """,
+    )
+    assert [sorted(json.loads(row["answers"])) for row in rows] == [["dept"], ["urgent"]]
+    # Requests are issued concurrently, so their order is not the input's.
+    assert sorted(tuple(request["questions"]) for request in mock.requests) == [("dept",), ("urgent",)]
+
+
+def test_ask_dynamic_declares_a_fixed_shape_because_the_answers_are_not(mock: MockTypeSafeServer) -> None:
+    """What DESCRIBE shows is the whole contract here — the JSON's shape is deliberately not in it."""
+    rows = _rows(mock, f"DESCRIBE SELECT * FROM typesafe.main.ask_dynamic('x', '{URGENT_JSON}');")
+    assert {r["column_name"]: r["column_type"] for r in rows} == {
+        "answers": "VARCHAR",
+        "model": "VARCHAR",
+        "input_tokens": "BIGINT",
+        "output_tokens": "BIGINT",
+    }
+
+
+def test_ask_dynamic_bills_one_request_per_distinct_pair(mock: MockTypeSafeServer) -> None:
+    """De-duplicating on the state alone would answer one of these two questions with the other's."""
+    rows = _rows(
+        mock,
+        f"""
+        SELECT count(*) AS n, count(DISTINCT a.answers) AS distinct_answers
+        FROM (VALUES ('My package is lost', '{DEPT_JSON}'),
+                     ('My package is lost', '{DEPT_JSON}'),
+                     ('My package is lost', '{URGENT_JSON}')) t(body, questions),
+             LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a;
+        """,
+    )
+    assert rows == [{"n": 3, "distinct_answers": 2}]
+    assert len(mock.requests) == 2, "one state, two different questions, and one repeat"
+
+
+def test_ask_dynamic_score_levels_stay_usable_keys_inside_the_json(mock: MockTypeSafeServer) -> None:
+    """ask() keys these with MAP(INTEGER, DOUBLE); JSON has only text keys, so they must read back as digits."""
+    rows = _rows(
+        mock,
+        """
+        SELECT (a.answers->'sev'->'probabilities'->>'2')::DOUBLE AS worst
+        FROM typesafe.main.ask_dynamic('The whole site is down, a critical outage',
+            '{"sev": {"type": "score", "instructions": "How severe is this?",
+              "criteria": ["minor question", "disruptive delay", "critical outage"]}}') a;
+        """,
+    )
+    assert rows[0]["worst"] > 0.5
+
+
+def test_ask_dynamic_points_at_the_row_whose_questions_are_missing(mock: MockTypeSafeServer) -> None:
+    """Questions are data here, so one row in a scan can be the broken one; the message must locate it.
+
+    Under a correlated LATERAL the batch is one row, so the index says nothing on
+    its own — quoting the offending row's own content is what makes the error
+    actionable in a table of thousands.
+    """
+    result = _run(
+        mock,
+        f"""
+        SELECT a.answers FROM (VALUES ('My package is lost', '{DEPT_JSON}'), ('No question for me', NULL))
+             t(body, questions), LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a;
+        """,
+    )
+    output = result.stderr + result.stdout
+    assert "carries no questions" in output
+    assert "No question for me" in output
+
+
+def test_ask_dynamic_names_the_row_and_the_question_that_is_malformed(mock: MockTypeSafeServer) -> None:
+    """ask() catches this at bind; here it can only be caught mid-scan, so it has to say a great deal more."""
+    result = _run(
+        mock,
+        """
+        SELECT a.answers FROM typesafe.main.ask_dynamic('x',
+            '{"sev": {"type": "score", "instructions": "How bad?", "criteria": ["only one level"]}}') a;
+        """,
+    )
+    assert "ask_dynamic(): score question 'sev' requires 'criteria'" in result.stderr + result.stdout
+    assert "row 0 of this input batch" in result.stderr + result.stdout
+
+
+def test_ask_dynamic_rejects_a_questions_column_that_cannot_hold_one(mock: MockTypeSafeServer) -> None:
+    """A column of the wrong type is wrong for every row at once, so it should fail before the scan starts."""
+    result = _run(mock, "SELECT * FROM typesafe.main.ask_dynamic('x', 42);")
+    assert "questions must be VARCHAR, STRUCT or MAP" in result.stderr + result.stdout
+    assert mock.requests == []
+
+
+# ---------------------------------------------------------------------------
 # noul() and score(): the other two one-question shorthands
 # ---------------------------------------------------------------------------
 
@@ -487,6 +633,7 @@ def test_models_fails_the_query_rather_than_returning_nothing(mock: MockTypeSafe
 
 def _published_examples() -> list[tuple[str, str]]:
     from vgi_typesafe.ask import AskFunction
+    from vgi_typesafe.ask_dynamic import AskDynamicFunction
     from vgi_typesafe.choice import ChoiceFunction
     from vgi_typesafe.is_true import IsTrueFunction
     from vgi_typesafe.models import ModelsFunction
@@ -495,7 +642,15 @@ def _published_examples() -> list[tuple[str, str]]:
 
     return [
         (f"{function.Meta.name}: {example.description}", example.sql)
-        for function in (AskFunction, ChoiceFunction, NoulFunction, ScoreFunction, IsTrueFunction, ModelsFunction)
+        for function in (
+            AskFunction,
+            AskDynamicFunction,
+            ChoiceFunction,
+            NoulFunction,
+            ScoreFunction,
+            IsTrueFunction,
+            ModelsFunction,
+        )
         for example in function.Meta.examples
     ]
 

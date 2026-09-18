@@ -26,6 +26,7 @@ import pytest
 from tests.test_end_to_end import HAYBARN, PROJECT
 from vgi_typesafe import worker as worker_module
 from vgi_typesafe.ask import AskFunction
+from vgi_typesafe.ask_dynamic import AskDynamicFunction
 from vgi_typesafe.choice import ChoiceFunction
 from vgi_typesafe.is_true import IsTrueFunction
 from vgi_typesafe.mock_server import MockTypeSafeServer, running
@@ -35,7 +36,15 @@ from vgi_typesafe.score import ScoreFunction
 
 pytestmark = pytest.mark.e2e
 
-FUNCTIONS = (AskFunction, ChoiceFunction, NoulFunction, ScoreFunction, IsTrueFunction, ModelsFunction)
+FUNCTIONS = (
+    AskFunction,
+    AskDynamicFunction,
+    ChoiceFunction,
+    NoulFunction,
+    ScoreFunction,
+    IsTrueFunction,
+    ModelsFunction,
+)
 #: Tables are a carrier too: `models` is exposed as one as well as a function,
 #: and its examples use the no-parentheses form, which no function example can.
 TABLES = tuple(table for schema in worker_module._TYPESAFE_CATALOG.schemas for table in schema.tables)

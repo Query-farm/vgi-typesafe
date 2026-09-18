@@ -49,15 +49,17 @@ WHERE a.dept.confidence > 0.8;
 | Function | Use it for |
 | --- | --- |
 | [`ask()`](#askstate-questions--) | Any number of questions per row, any mix of types, structured state. |
+| [`ask_dynamic()`](#ask_dynamicstate-questions--model--concurrency-) | Questions that **differ per row**. Answers come back as JSON, not typed columns. |
 | [`choice()`](#choicestate-instructions--criteria---model--concurrency-) | One `choice` question: pick an option. Flat output columns. |
 | [`noul()`](#noulstate-instructions---criteria--model--concurrency-) | One `noul` question: yes/no, answered as a probability. |
 | [`score()`](#scorestate-instructions--criteria---model--concurrency-) | One `score` question: a position on an ordered scale. |
 | [`is_true()`](#is_truestate-instructions) | A noul as a **scalar**, for `WHERE` / `CASE` / `ORDER BY` without a join. |
 | [`models()`](#models) | Which models `model =>` will accept. No arguments, no tokens. |
 
-For the four table functions the first argument **is** the per-row input, so the same call works on a
-literal, on `FROM t, f(t.x)`, and on `LATERAL f(t.x)` alike. `is_true()` is an ordinary scalar
-expression. `models()` takes no input at all.
+For the five question table functions the first argument **is** the per-row input, so the same call
+works on a literal, on `FROM t, f(t.x)`, and on `LATERAL f(t.x)` alike — and `ask_dynamic()` makes its
+second argument a per-row input too, which is exactly what lets the questions vary. `is_true()` is an
+ordinary scalar expression. `models()` takes no input at all.
 
 ## `ask(state, questions => ...)`
 
@@ -112,6 +114,79 @@ Other named arguments: `model =>` (default `jev-latest`), `concurrency =>` (defa
   asking anyway would bill a request for a meaningless answer. (`0`, `false` and `''` are content.)
 - **Identical states within a batch are asked, and billed, once** — regardless of key order.
 - **Errors raise; they never become NULL.** `429` and `529` are retried with exponential backoff first.
+
+## `ask_dynamic(state, questions [, model =>, concurrency =>])`
+
+The same request as `ask()`, with the questions moved from a **named** argument to a **positional**
+one. For a blended table function a positional argument *is* a per-row input column, so the questions
+become data: two rows in one scan may ask entirely different things.
+
+**Reach for `ask()` first.** Its questions are fixed when the query is planned, which is what lets it
+hand back one typed `STRUCT` column per question. `ask_dynamic()` trades those typed columns away —
+nothing about the result shape is knowable at plan time, so every answer arrives inside one JSON
+column you take apart yourself. It is the more awkward of the two and should not be anyone's default.
+Use it when the questions genuinely vary per row: a rules table joined to the rows it governs, a work
+queue where each item carries its own rubric, questions assembled by an application.
+
+```sql
+-- Each row carries the question it wants asked, and they are not the same kind of question.
+SELECT t.id,
+       a.answers->'dept'->>'choice'            AS dept,
+       (a.answers->'urgent'->>'noul')::DOUBLE  AS urgent
+FROM queue t, LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a
+ORDER BY t.id;
+```
+
+| Argument | | |
+| --- | --- | --- |
+| `state` | positional, per-row | The content to evaluate — same shapes `ask()` accepts, except that `parse_json` does not exist here. |
+| `questions` | positional, per-row | That row's questions, keyed by name. JSON text, a `STRUCT` or a `MAP`. |
+| `model` | named `VARCHAR` | Defaults to `jev-latest`. |
+| `concurrency` | named `INTEGER` | In-flight requests per input batch. Default 8, max 64. |
+
+`model` and `concurrency` stay **named** because a blended function cannot take a positional
+bind-time constant — DuckDB sweeps one into the input subquery, where it is indistinguishable from an
+input column.
+
+### Writing the questions
+
+| Form | |
+| --- | --- |
+| **JSON text** | Each row carries its own shape verbatim, reconciled against no other row. **Prefer this when the questions really differ.** |
+| `STRUCT` / `MAP` | Works, and reads better when the questions vary only in wording — but DuckDB unifies a column's type across rows. |
+
+The unification is the catch. A question only some rows ask is padded onto *every* row as `NULL`;
+that part is harmless, because those NULLs are dropped before the request (a row is never billed for,
+or answered with, a question it did not ask). But two rows that give **one question name two
+different criteria shapes** — a choice's map on one row, a score's list on the next — cannot be
+unified at all, and DuckDB rejects the query before this worker ever sees it. JSON text has neither
+constraint.
+
+### Output
+
+| Output column | Type | |
+| --- | --- | --- |
+| `answers` | `VARCHAR` | A JSON object keyed by question name. `NULL` when the state was `NULL`. |
+| `model` | `VARCHAR` | The model that answered. |
+| `input_tokens`, `output_tokens` | `BIGINT` | Usage for that row's request. |
+
+Each value inside `answers` is the answer object for that question's type — `{"choice", "confidence",
+"probabilities"}`, `{"noul"}`, or `{"score", "confidence", "probabilities"}`. A score's probabilities
+are keyed by **level number** as `ask()`'s are, but JSON keys are text, so they read back as `"0"`,
+`"1"`, … — reachable with `a.answers->'sev'->'probabilities'->>'0'`. The cost columns stay real
+columns precisely because their shape never varies: reading what a query spent should not cost a JSON
+parse.
+
+### Row semantics
+
+Identical to `ask()`, with two differences:
+
+- **Questions are validated per row, not at bind**, because they are data. A row carrying no
+  questions is an error that names the row *and quotes its content* — under a correlated `LATERAL`
+  DuckDB hands over one row at a time, so an index alone would locate nothing. A row whose state is
+  `NULL` is never asked anything, so its questions are not examined at all.
+- **De-duplication is on the `(state, questions)` pair**, not on the state alone. The same text asked
+  two different things is two requests; the same text asked the same thing twice is one.
 
 ## `choice(state, instructions =>, criteria => [, model =>, concurrency =>])`
 
@@ -300,6 +375,7 @@ One module per published function, plus the four they all share.
 | --- | --- |
 | `vgi_typesafe/worker.py` | The catalog: which functions exist, and the catalog/schema-level docs. |
 | `vgi_typesafe/ask.py` | `ask()` — N questions per row, dynamic output schema. |
+| `vgi_typesafe/ask_dynamic.py` | `ask_dynamic()` — questions as a per-row column, answers as JSON. |
 | `vgi_typesafe/choice.py` | `choice()` — one choice question, flat columns. |
 | `vgi_typesafe/noul.py` | `noul()` — one yes/no question, flat columns. |
 | `vgi_typesafe/score.py` | `score()` — one ordered-scale question, flat columns. |
@@ -311,8 +387,9 @@ One module per published function, plus the four they all share.
 | `vgi_typesafe/mock_server.py` | The bundled endpoint the whole suite runs against. |
 | `vgi-agent-tests.yaml` | Private graders for the tasks published in `vgi.agent_test_tasks`. |
 
-Every question function is a thin wrapper over `typesafe_api.ask_many()`, which is the one place a
-batch becomes requests — one per *distinct* non-null state, concurrently. A new question type adds a
+Every question function is a thin wrapper over `typesafe_api.ask_pairs()`, which is the one place a
+batch becomes requests — one per *distinct* `(state, questions)` pair, concurrently. `ask_many()` is
+the special case where every row asks the same thing, and rides on it. A new question type adds a
 module, not a request path.
 
 ## Where we are stricter than the API

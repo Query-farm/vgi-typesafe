@@ -5,12 +5,15 @@
 A System One request carries a single ``state`` and a map of named questions,
 all answered in parallel by the API. So however many questions a row asks, it
 costs one request — and a batch of input rows is one request per *distinct*
-state, issued concurrently.
+(state, questions) pair, issued concurrently.
 
 Three question types exist: ``choice`` (pick one option), ``noul`` (a yes/no
-probability) and ``score`` (a position on an ordered scale). :func:`ask_many` is
-the general path; :func:`ask_choices` is the one-question shorthand ``choice()``
-uses, and rides on it.
+probability) and ``score`` (a position on an ordered scale). :func:`ask_pairs` is
+the one place a batch becomes requests: it takes a ``(state, questions)`` pair
+per row, so rows may ask different things, and de-duplicates on the pair.
+:func:`ask_many` is the common case where every row asks the same questions, and
+:func:`ask_choices` is the one-question shorthand ``choice()`` uses; both ride on
+:func:`ask_pairs`.
 
 ``GET /v1/models`` is the other endpoint: the catalog of models a key may name
 in a request. It carries no state and costs no tokens, and :func:`list_models`
@@ -333,9 +336,76 @@ def ask(
     )
 
 
-def _state_key(state: Any) -> str:
-    """A hashable identity for a state, which may be an (unhashable) object or array."""
-    return json.dumps(state, sort_keys=True, ensure_ascii=False)
+#: One row's request: the state to judge and the questions to ask of it.
+Pair = tuple[Any, Mapping[str, Mapping[str, Any]]]
+
+
+def _pair_key(pair: Pair) -> str:
+    """A hashable identity for a (state, questions) pair, either half unhashable.
+
+    Key order is normalised away, so two rows whose states differ only in the
+    order their fields were written share one request — and so do two rows that
+    list the same questions in a different order, which is the same request to an
+    API that keys its answers by name.
+
+    Args:
+        pair: The state and the questions that will be asked about it.
+
+    Returns:
+        A string that is equal exactly when two pairs would send the same body.
+    """
+    return json.dumps(pair, sort_keys=True, ensure_ascii=False)
+
+
+def ask_pairs(
+    pairs: Sequence[Pair | None],
+    *,
+    credentials: Credentials,
+    client: httpx.Client,
+    model: str = DEFAULT_MODEL,
+    concurrency: int = 8,
+) -> list[Response | None]:
+    """Answer one (state, questions) pair per row, in input order.
+
+    The single place a batch becomes requests. ``ask_many`` is the special case
+    where every row asks the same questions; ``ask_dynamic()`` is the case where
+    they may all differ, which is why de-duplication is keyed on the *pair*
+    rather than on the state — the same text asked two different things is two
+    requests, and the same text asked the same thing twice is one.
+
+    Args:
+        pairs: One entry per row; ``None`` means "make no request for this row".
+        credentials: The API key, and the base URL to send it to.
+        client: The HTTP client to issue on; safe to share across threads.
+        model: The TypeSafe model id every request names.
+        concurrency: Maximum requests in flight at once.
+
+    Returns:
+        One entry per input row, in input order. Rows sharing a pair share one
+        :class:`Response` object.
+    """
+    distinct: dict[str, Pair] = {}
+    keys: list[str | None] = []
+    for pair in pairs:
+        if pair is None:
+            keys.append(None)
+            continue
+        key = _pair_key(pair)
+        keys.append(key)
+        distinct.setdefault(key, pair)
+    if not distinct:
+        return [None] * len(pairs)
+
+    def one(pair: Pair) -> Response:
+        return ask(pair[0], pair[1], credentials=credentials, client=client, model=model)
+
+    if len(distinct) == 1 or concurrency <= 1:
+        answered = [one(p) for p in distinct.values()]
+    else:
+        with ThreadPoolExecutor(max_workers=min(concurrency, len(distinct))) as pool:
+            answered = list(pool.map(one, distinct.values()))
+    by_key = dict(zip(distinct, answered, strict=True))
+    return [None if key is None else by_key[key] for key in keys]
 
 
 def ask_many(
@@ -352,26 +422,13 @@ def ask_many(
     A ``None`` state yields ``None`` without a request. Repeated states — common
     under a LATERAL over a low-cardinality column — are asked once.
     """
-    distinct: dict[str, Any] = {}
-    keys: list[str | None] = []
-    for state in states:
-        key = None if state is None else _state_key(state)
-        keys.append(key)
-        if key is not None:
-            distinct.setdefault(key, state)
-    if not distinct:
-        return [None] * len(states)
-
-    def one(state: Any) -> Response:
-        return ask(state, questions, credentials=credentials, client=client, model=model)
-
-    if len(distinct) == 1 or concurrency <= 1:
-        answered = [one(s) for s in distinct.values()]
-    else:
-        with ThreadPoolExecutor(max_workers=min(concurrency, len(distinct))) as pool:
-            answered = list(pool.map(one, distinct.values()))
-    by_key = dict(zip(distinct, answered, strict=True))
-    return [None if key is None else by_key[key] for key in keys]
+    return ask_pairs(
+        [None if state is None else (state, questions) for state in states],
+        credentials=credentials,
+        client=client,
+        model=model,
+        concurrency=concurrency,
+    )
 
 
 def ask_choices(

@@ -360,6 +360,39 @@ class TestWeAreStricterThanProductionOnPurpose:
             questions_of({"q": {"type": "noul", "criteria": {"true": "about money"}}})
 
 
+def test_per_row_questions_reach_production_as_two_separate_requests(
+    credentials: Credentials, client: api.httpx.Client
+) -> None:
+    """`ask_dynamic()` sends a different question map per row; only production can show the pairing is real.
+
+    Offline this is asserted against the mock's request log, which is our own
+    code answering our own code. Here it is asserted against the only thing
+    production can show: two rows sharing one state but carrying different
+    questions come back with different answer keys, which is only possible if
+    each row's own questions were the ones sent. This is the assumption the
+    pair-keyed batching in `ask_pairs` rests on, and the one that a state-keyed
+    batching bug would silently violate.
+    """
+    state = "My package never arrived and nobody has replied in three days"
+    dept = {
+        "type": "choice",
+        "instructions": "Which team should handle this?",
+        "criteria": {"shipping": "Delivery status, delays, lost packages", "billing": "Charges, invoices"},
+    }
+    urgent = {"type": "noul", "instructions": "Does this need a reply today?"}
+    pairs: list[api.Pair | None] = [(state, {"dept": dept}), (state, {"urgent": urgent}), None]
+
+    responses = api.ask_pairs(pairs, credentials=credentials, client=client)
+
+    assert responses[2] is None, "a row with nothing to ask must cost nothing"
+    assert responses[0] is not None and responses[1] is not None
+    assert set(responses[0].answers) == {"dept"}, "one state, and only the questions this row carried"
+    assert set(responses[1].answers) == {"urgent"}
+    assert responses[0] is not responses[1], "the same state asked two things is two answers, not one"
+    assert responses[0].answers["dept"]["choice"] == "shipping"
+    assert responses[1].answers["urgent"]["noul"] > 0.5
+
+
 class TestStructuredInputIsAccepted:
     """Shapes we advertise in the catalog docs must actually be accepted upstream."""
 
