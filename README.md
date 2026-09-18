@@ -28,32 +28,140 @@
 <p align="center">
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/lint-ruff-261230.svg?logo=ruff&logoColor=d7ff64" alt="Ruff"></a>
   <a href="https://mypy-lang.org/"><img src="https://img.shields.io/badge/mypy-strict-2a6db2.svg" alt="mypy strict"></a>
-  <img src="https://img.shields.io/badge/tests-464%20offline%20%C2%B7%2026%20live-2f7d32.svg" alt="464 offline tests, 26 live">
+  <img src="https://img.shields.io/badge/tests-470%20offline%20%C2%B7%2026%20live-2f7d32.svg" alt="470 offline tests, 26 live">
   <a href="https://github.com/Query-farm/vgi-lint-check"><img src="https://img.shields.io/badge/vgi--lint-100%2F100%20L2-2f7d32.svg" alt="vgi-lint 100/100, assurance L2 behavioural"></a>
 </p>
 
 ---
 
-```sql
--- The entry script carries a PEP-723 header, so `uv run` resolves its
--- dependencies on the fly: this works from any directory, on a machine that has
--- never seen this project.
-ATTACH 'typesafe' (TYPE vgi, LOCATION 'uv run /path/to/typesafe_worker.py');
-CREATE SECRET (TYPE typesafe, api_key 'ts-...');
+## Install and attach
 
--- Route, flag and grade every ticket: three judgments, ONE request per row.
-SELECT t.id, a.dept.choice, a.dept.confidence, a.urgent.noul, a.severity.score
+Nothing to clone — `uvx` fetches and runs the worker, and DuckDB speaks to it over
+the [VGI](https://query.farm/vgi/) extension.
+
+```sql
+INSTALL vgi FROM community;
+LOAD vgi;
+
+ATTACH 'typesafe' (TYPE vgi,
+  LOCATION 'uvx --from git+https://github.com/Query-farm/vgi-typesafe vgi-typesafe');
+
+-- Your key, from https://typesafe.ai. Redacted in duckdb_secrets().
+CREATE SECRET (TYPE typesafe, api_key 'ts-...');
+```
+
+## Start here
+
+Ask one question about one value. The answer comes back as columns, not prose:
+
+```sql
+SELECT choice, confidence
+FROM typesafe.main.choice('My package never arrived and tracking has not updated',
+    instructions => 'Which team should handle this?',
+    criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+                     'billing':  'Charges, invoices, payment problems',
+                     'returns':  'Exchanges, refunds, wrong or damaged items'});
+-- shipping | 1.0
+```
+
+`confidence` is how concentrated the model's probability distribution was. It is the
+thing that makes this usable in production: it tells you which rows you can act on
+without a human.
+
+### Classify a whole table
+
+Put the function in a `LATERAL` join and the same question runs for every row. One
+request per row, issued concurrently, and repeated values are asked once:
+
+```sql
+SELECT t.id, c.choice AS team, c.confidence
+FROM tickets t,
+     LATERAL typesafe.main.choice(t.body,
+         instructions => 'Which team should handle this?',
+         criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+                          'billing':  'Charges, invoices, payment problems',
+                          'returns':  'Exchanges, refunds, wrong or damaged items'}) c;
+```
+
+### Route the confident ones, keep the rest for a human
+
+This is the pattern worth stealing. Judge once, then split on `confidence`:
+
+```sql
+CREATE TABLE routed AS
+SELECT t.id, t.body, c.choice AS team, c.confidence
+FROM tickets t,
+     LATERAL typesafe.main.choice(t.body,
+         instructions => 'Which team should handle this?',
+         criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+                          'billing':  'Charges, invoices, payment problems',
+                          'returns':  'Exchanges, refunds, wrong or damaged items'}) c;
+
+SELECT * FROM routed WHERE confidence >= 0.8;   -- auto-route these
+SELECT * FROM routed WHERE confidence <  0.8;   -- queue these for review
+```
+
+### Ask several things at once
+
+Each row is one API request no matter how many questions it carries, so asking three
+things costs the same as asking one. Mix the question types freely:
+
+```sql
+SELECT t.id,
+       a.team.choice     AS team,
+       a.team.confidence AS team_confidence,
+       a.urgent.noul     AS urgency,        -- 0..1; near 1 is yes
+       a.severity.score  AS severity        -- 0..2 on the scale below
+FROM tickets t,
+     LATERAL typesafe.main.ask(t.body, questions => {
+         'team':     {'type': 'choice', 'instructions': 'Which team should handle this?',
+                      'criteria': {'shipping': 'Delivery status, delays, lost packages',
+                                   'billing':  'Charges, invoices, payment problems',
+                                   'returns':  'Exchanges, refunds, wrong or damaged items'}},
+         'urgent':   {'type': 'noul',  'instructions': 'Does this need a reply today?'},
+         'severity': {'type': 'score', 'instructions': 'How severe is this?',
+                      'criteria': ['minor question', 'disruptive delay', 'critical outage']}}) a
+ORDER BY a.severity.score DESC;
+```
+
+### Judge the whole row, not one column
+
+When several columns matter together, pass the row itself. The model sees the field
+names, which is how it knows a `tier` of `gold` relates to the `message`:
+
+```sql
+SELECT t.id, a.urgent.noul AS urgency
 FROM tickets t,
      LATERAL typesafe.main.ask(t, questions => {
-         'dept':     {'type': 'choice', 'instructions': 'Which team should handle this?',
-                      'criteria': {'returns':  'Exchanges, refunds, wrong or damaged items',
-                                   'shipping': 'Delivery status, delays, lost packages',
-                                   'billing':  'Charges, invoices, payment problems'}},
-         'urgent':   {'type': 'noul',  'instructions': 'Does this need a reply today?'},
-         'severity': {'type': 'score', 'instructions': 'How bad is it?',
-                      'criteria': ['minor question', 'disruptive delay', 'critical outage']}}) a
-WHERE a.dept.confidence > 0.8;
+         'urgent': {'type': 'noul',
+                    'instructions': 'Does this need a reply today? Weigh the customer tier.'}}) a;
 ```
+
+### Filter directly, with no join
+
+For a single yes/no, `is_true()` is a scalar — it goes wherever an expression goes:
+
+```sql
+SELECT * FROM tickets
+WHERE typesafe.main.is_true(body, 'Is this an angry complaint?') > 0.5;
+```
+
+### See the shape before you spend anything
+
+`DESCRIBE` binds the call — validating the questions and computing the result
+columns — without sending a request or costing a token:
+
+```sql
+DESCRIBE SELECT * FROM typesafe.main.ask('x', questions => {
+    'team':   {'type': 'choice', 'instructions': 'Which team?',
+               'criteria': {'shipping': 'Lost packages', 'billing': 'Invoices'}},
+    'urgent': {'type': 'noul', 'instructions': 'Needs a reply today?'}});
+-- team   STRUCT(choice VARCHAR, confidence DOUBLE, probabilities MAP(VARCHAR, DOUBLE))
+-- urgent STRUCT(noul DOUBLE)
+-- usage  STRUCT(model VARCHAR, input_tokens BIGINT, output_tokens BIGINT)
+```
+
+## The functions
 
 | Function | Use it for |
 | --- | --- |
@@ -381,90 +489,6 @@ CREATE SECRET (TYPE typesafe, api_key 'test-key', base_url 'http://127.0.0.1:878
 Ruff, mypy and pydoclint settings are mirrored from
 [vgi-python](https://github.com/Query-farm/vgi-python), so the fleet lints identically: 120-column
 lines, Google-style docstrings enforced on tests as well as the package, and mypy `strict`.
-
-### Tests
-
-464 offline tests and 26 live ones. Everything except `test_live.py` runs against the bundled
-endpoint, so the default suite needs no key and no network.
-
-| File | |
-| --- | --- |
-| `test_mock_server.py` | The bundled endpoint's scoring for each question type, its validation, and its HTTP behaviour. |
-| `test_typesafe_api.py` | Wire format, answer parsing, retries, errors, and per-batch de-duplication. |
-| `test_auth.py` | Secret and environment key resolution, and redaction. |
-| `test_ask_logic.py`, `test_ask_dynamic_logic.py` | The validation rules, as messages a user will actually read. |
-| `test_ask_function.py`, `test_ask_dynamic_function.py`, `test_choice_function.py`, `test_noul_function.py`, `test_score_function.py`, `test_is_true_function.py`, `test_models_function.py` | Each function driven over the real VGI protocol, worker in a subprocess. |
-| `test_end_to_end.py` | Real SQL: `ATTACH`, `CREATE SECRET`, `LATERAL`, whole-row state. |
-| `test_examples.py` | Executes **every** example this worker publishes, from all five carriers. |
-| `test_packaging.py` | That the project installs and runs for someone who is not us. |
-| `test_docstrings.py` | The pydoclint gate, run inside the suite. |
-| `test_live.py` | The only tests that call the real API. Deselected by default. |
-
-`test_live.py` exists because every other test asserts the *bundled endpoint's* behaviour, which
-makes it both the thing under test and the definition of correct. It has already earned that: the
-endpoint echoed the requested model where production resolves `jev-latest` to a concrete version,
-and six offline tests had pinned the echo as if it were the API's behaviour.
-
-### Catalog metadata
-
-The catalog is linted by [vgi-lint-check](https://github.com/Query-farm/vgi-lint-check), which
-checks that this worker documents itself well enough for an agent to use it without reading the
-source:
-
-```sh
-uv run vgi-typesafe-mock --port 8787 --api-key k &
-TYPESAFE_API_KEY=k TYPESAFE_BASE_URL=http://127.0.0.1:8787 \
-  uvx --from vgi-lint-check vgi-lint lint --execute --audit-waivers --no-check-links
-# 100/100, 0 findings, Assurance L2 behavioural
-```
-
-Pointing the worker at the bundled endpoint makes the `--execute` tier free and keyless — it
-attaches the worker and runs the shipped examples, which is the only way a declared result schema
-gets checked against what a function really returns.
-
-`vgi-lint.toml` holds the settings and one waiver: `ask()` names its result columns after the
-caller's own questions, so no fixed variant table can enumerate them. `--audit-waivers` re-runs the
-waived rule and fails if it ever stops buying anything.
-
-`vgi.agent_test_tasks` publishes only each task's `{name, prompt}`. The graders live in
-`vgi-agent-tests.yaml`, outside the catalog, so an agent being measured by `vgi-lint simulate`
-cannot read the answer key out of the worker it is querying.
-
-### CI
-
-| Job | Gates |
-| --- | --- |
-| Lint, types, offline tests | ruff, ruff format, mypy strict, pytest, and both entry points started with `--no-project` from a scratch directory |
-| Catalog metadata | `vgi-lint` structural **and** behavioural tiers, against the bundled endpoint |
-| Live API (scheduled) | `pytest -m live` against production, serialised so two runs never share one rate limit |
-
-The entry-point step is the one the other 460-odd tests structurally cannot be: they all run from
-inside a synced venv at the project root, which is exactly where a broken entry script still works.
-
-### Layout
-
-One module per published function, plus the four they all share.
-
-| Path | |
-| --- | --- |
-| `vgi_typesafe/worker.py` | The catalog: which functions exist, and the catalog/schema-level docs. |
-| `vgi_typesafe/ask.py` | `ask()` — N questions per row, dynamic output schema. |
-| `vgi_typesafe/ask_dynamic.py` | `ask_dynamic()` — questions as a per-row column, answers as JSON. |
-| `vgi_typesafe/choice.py` | `choice()` — one choice question, flat columns. |
-| `vgi_typesafe/noul.py` | `noul()` — one yes/no question, flat columns. |
-| `vgi_typesafe/score.py` | `score()` — one ordered-scale question, flat columns. |
-| `vgi_typesafe/is_true.py` | `is_true()` — the scalar form of a noul. |
-| `vgi_typesafe/models.py` | `models()`, registered as both a function and a table. |
-| `vgi_typesafe/typesafe_api.py` | The only module that speaks HTTP: requests, retries, answer parsing. |
-| `vgi_typesafe/auth.py` | Secret and environment resolution for the API key. |
-| `vgi_typesafe/meta.py` | Catalog-tag helpers: column comments, result schemas, doc tags. |
-| `vgi_typesafe/mock_server.py` | The bundled endpoint the whole suite runs against. |
-| `vgi-agent-tests.yaml` | Private graders for the tasks published in `vgi.agent_test_tasks`. |
-
-Every question function is a thin wrapper over `typesafe_api.ask_pairs()`, which is the one place a
-batch becomes requests — one per *distinct* `(state, questions)` pair, concurrently. `ask_many()` is
-the special case where every row asks the same thing, and rides on it. A new question type adds a
-module, not a request path.
 
 ## Where we are stricter than the API
 

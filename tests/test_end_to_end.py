@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -661,16 +662,42 @@ def test_every_published_example_runs(mock: MockTypeSafeServer, label: str, sql:
     assert _rows(mock, f"{sql};"), label
 
 
-def test_the_readme_headline_query_runs(mock: MockTypeSafeServer) -> None:
-    """The first thing a reader copies; it has to work."""
+def _readme_walkthrough_sql() -> list[str]:
+    """Every ```sql block in the README's walkthrough, in order.
+
+    The walkthrough is what a reader copies before reading anything else, so it is
+    the part most worth executing. The ATTACH/secret block is skipped — this
+    harness supplies its own, pointed at the mock.
+
+    Returns:
+        One SQL script per fenced block worth running.
+    """
     readme = (PROJECT / "README.md").read_text()
-    query = readme.split("-- Route, flag and grade every ticket", 1)[1].split("```", 1)[0]
-    query = query.split("\n", 1)[1]  # drop the rest of the comment line
-    rows = _rows(
-        mock,
-        "CREATE TEMP TABLE tickets AS SELECT * FROM (VALUES "
-        "(1, 'My package is lost and delivery is delayed'), "
-        "(2, 'I was charged twice on my invoice')) t(id, body);\n"
-        + query.replace("WHERE a.dept.confidence > 0.8", "ORDER BY t.id"),
+    walkthrough = readme[readme.index("## Install and attach") : readme.index("## The functions")]
+    blocks = re.findall(r"```sql\n(.*?)```", walkthrough, re.S)
+    return [b for b in blocks if "ATTACH" not in b and "INSTALL vgi" not in b]
+
+
+README_SQL = _readme_walkthrough_sql()
+
+
+@pytest.mark.parametrize("sql", README_SQL, ids=[f"block{i}" for i in range(1, len(README_SQL) + 1)])
+def test_every_readme_example_runs(mock: MockTypeSafeServer, sql: str) -> None:
+    """The walkthrough is the first thing a reader copies; all of it has to work.
+
+    Executed rather than eyeballed, and keyed on the section headings rather than a
+    comment string — an earlier version keyed on a comment, which a reword silently
+    broke. Row counts are not asserted: the bundled endpoint scores by keyword
+    overlap, so a threshold that selects rows against production may select none
+    here. What must hold is that every statement binds and runs.
+    """
+    setup = (
+        "CREATE TABLE tickets AS SELECT * FROM (VALUES "
+        "(1, 'My package never arrived and tracking has not updated', 'gold'), "
+        "(2, 'I was charged twice on my invoice', 'free')) t(id, body, tier);\n"
     )
-    assert [r["choice"] for r in rows] == ["shipping", "billing"]
+    body = "\n".join(line for line in sql.splitlines() if not line.strip().startswith("--"))
+    result = _run(mock, setup + body)
+    assert result.returncode == 0 and not result.stderr.strip(), (
+        f"a README example failed:\n{sql}\n{result.stderr.strip()}"
+    )
