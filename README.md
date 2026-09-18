@@ -28,7 +28,7 @@
 <p align="center">
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/lint-ruff-261230.svg?logo=ruff&logoColor=d7ff64" alt="Ruff"></a>
   <a href="https://mypy-lang.org/"><img src="https://img.shields.io/badge/mypy-strict-2a6db2.svg" alt="mypy strict"></a>
-  <img src="https://img.shields.io/badge/tests-470%20offline%20%C2%B7%2026%20live-2f7d32.svg" alt="470 offline tests, 26 live">
+  <img src="https://img.shields.io/badge/tests-472%20offline%20%C2%B7%2026%20live-2f7d32.svg" alt="472 offline tests, 26 live">
   <a href="https://github.com/Query-farm/vgi-lint-check"><img src="https://img.shields.io/badge/vgi--lint-100%2F100%20L2-2f7d32.svg" alt="vgi-lint 100/100, assurance L2 behavioural"></a>
 </p>
 

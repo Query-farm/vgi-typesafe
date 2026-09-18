@@ -89,7 +89,7 @@ vgi_typesafe/
 ## Testing
 
 ```sh
-uv run pytest -q                              # 470 offline; no key, no network
+uv run pytest -q                              # 472 offline; no key, no network
 TYPESAFE_API_KEY=... uv run pytest -m live    # 26 live; real API, real tokens
 ```
 
