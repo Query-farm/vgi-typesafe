@@ -6,52 +6,63 @@
 # The canonical answer lives here, outside the catalog, so an agent being
 # measured by `vgi-lint simulate` cannot read the answer key out of the very
 # worker it is querying (VGI416).
+#
+# `simulate` attaches ONLY this worker, which exposes two functions and no
+# tables. Every reference query must therefore be self-contained: supply its own
+# rows with VALUES or a literal. A reference that selects from a table the
+# analyst does not have cannot run, and a grader that cannot run grades nothing.
+# tests/test_examples.py executes every one of these.
 tasks:
   - name: route_a_support_ticket
     reference_sql: >-
-      SELECT t.id, c.choice, c.confidence FROM tickets t,
-      LATERAL typesafe.main.choice(t.body, instructions => 'Which team should handle this?',
+      SELECT choice, confidence FROM typesafe.main.choice(
+      'My package never arrived and the tracking has not updated in a week.',
+      instructions => 'Which team should handle this?',
       criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
       'billing': 'Charges, invoices, payment problems',
-      'returns': 'Exchanges, refunds, damaged items'}) c
+      'returns': 'Exchanges, refunds, damaged items'})
     success_criteria: >-
-      Uses typesafe.main.choice for the single question and reports the confidence column
-      alongside the chosen option.
+      Uses typesafe.main.choice for the single question, chooses shipping, and reports the
+      confidence column alongside the chosen option.
     unordered: true
 
   - name: several_judgments_one_request
     reference_sql: >-
-      SELECT t.id, a.dept.choice, a.angry.noul, a.severity.score FROM tickets t,
-      LATERAL typesafe.main.ask(t.body, questions =>
-      {'dept': {'type': 'choice', 'instructions': 'Which team should handle this?',
-      'criteria': {'shipping': 'Lost packages', 'billing': 'Invoices'}},
+      SELECT a.dept.choice, a.angry.noul, a.severity.score FROM typesafe.main.ask(
+      'I was charged twice and nobody has replied to me in three days',
+      questions => {'dept': {'type': 'choice', 'instructions': 'Which team should handle this?',
+      'criteria': {'shipping': 'Delivery status, delays, lost packages',
+      'billing': 'Charges, invoices, payment problems'}},
       'angry': {'type': 'noul', 'instructions': 'Is the customer angry?'},
-      'severity': {'type': 'score', 'instructions': 'How bad is it?',
-      'criteria': ['minor', 'disruptive', 'critical']}}) a
+      'severity': {'type': 'score', 'instructions': 'How severe is this?',
+      'criteria': ['minor question', 'disruptive delay', 'critical outage']}}) a
     success_criteria: >-
-      Uses a SINGLE typesafe.main.ask call carrying all three questions rather than three
-      separate calls, and reads each answer out of its own struct column.
+      Uses a SINGLE typesafe.main.ask call carrying all three questions rather than three separate
+      calls, and reads each answer out of its own struct column.
     unordered: true
 
   - name: route_only_the_confident_ones
     reference_sql: >-
-      SELECT t.id, c.choice FROM tickets t,
+      SELECT t.body, c.choice FROM (VALUES ('my package is lost in delivery'),
+      ('my invoice shows a wrong charge')) t(body),
       LATERAL typesafe.main.choice(t.body, instructions => 'Which team should handle this?',
-      criteria => MAP {'shipping': 'Lost packages', 'billing': 'Invoices'}) c
+      criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+      'billing': 'Charges, invoices, payment problems'}) c
       WHERE c.confidence > 0.8
     success_criteria: >-
-      Filters on the confidence column rather than accepting every answer; the threshold itself
-      is a judgement call and any reasonable value counts.
+      Filters on the confidence column rather than accepting every answer. The threshold is a
+      judgement call and any reasonable value counts.
     unordered: true
 
   - name: judge_a_whole_row
     reference_sql: >-
-      SELECT t.id, a.urgent.noul FROM tickets t,
+      SELECT t.id, a.urgent.noul FROM (VALUES (1, 'my parcel is lost', 'gold', 'A-104'))
+      t(id, message, tier, order_id),
       LATERAL typesafe.main.ask(t, questions =>
       {'urgent': {'type': 'noul', 'instructions': 'Does this need a reply today?'}}) a
     success_criteria: >-
-      Passes the whole row (or a struct built from several columns) as the state, rather than a
-      single text column, so the model sees the columns together.
+      Passes the whole row (or a struct built from several of its columns) as the state, rather
+      than a single text column, so the model sees the columns together.
     unordered: true
 
   - name: find_out_what_columns_come_back

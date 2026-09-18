@@ -67,37 +67,41 @@ _AGENT_TEST_TASKS = json.dumps(
         {
             "name": "route_a_support_ticket",
             "prompt": (
-                "I have a table of support tickets with a body column. Route each one to the "
-                "shipping, billing or returns team, and tell me how confident the model was."
+                "Route this support message to the right team — shipping, billing or returns — and "
+                "tell me how confident the model was: 'My package never arrived and the tracking "
+                "has not updated in a week.'"
             ),
         },
         {
             "name": "several_judgments_one_request",
             "prompt": (
-                "For each support ticket I want three things at once: which team should handle it, "
-                "whether the customer sounds angry, and how severe it is on a three-point scale. "
-                "Do it without paying for three separate API calls per row."
+                "For the message 'I was charged twice and nobody has replied to me in three days', "
+                "I want three things at once: which team should handle it, whether the customer "
+                "sounds angry, and how severe it is on a three-point scale. Do it without paying "
+                "for three separate API calls."
             ),
         },
         {
             "name": "route_only_the_confident_ones",
             "prompt": (
-                "Classify these tickets, but only auto-route the ones the model is confident about "
-                "— send the rest to a human review queue."
+                "Classify these two messages into shipping or billing — 'my package is lost in "
+                "delivery' and 'my invoice shows a wrong charge' — but only keep the rows the model "
+                "was confident about, so the rest can go to a human."
             ),
         },
         {
             "name": "judge_a_whole_row",
             "prompt": (
-                "My rows have several columns that matter together (message, customer tier, order "
-                "id). Ask a question about the whole row rather than just one text column."
+                "I have rows where several columns matter together — a message, a customer tier and "
+                "an order id. Ask one yes/no question about the whole row rather than just the "
+                "message column."
             ),
         },
         {
             "name": "find_out_what_columns_come_back",
             "prompt": (
-                "Before I run this against real data, what columns and types will I get back if I "
-                "ask a choice question and a yes/no question about the same row?"
+                "Before I run this against real data: what columns and types come back if I ask a "
+                "choice question and a yes/no question about the same row?"
             ),
         },
     ]
