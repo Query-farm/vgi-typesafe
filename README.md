@@ -9,18 +9,33 @@
 <p align="center">
   <a href="https://docs.typesafe.ai/introduction">TypeSafe</a> System One questions — <strong>choice</strong>,<br>
   <strong>noul</strong> and <strong>score</strong> — as DuckDB table functions you can <code>LATERAL</code> join against.<br>
-  A <strong>read-only</strong> <a href="https://query.farm/vgi/">VGI</a> worker, built by <a href="https://query.farm">🚜 Query.Farm</a>
-</p>
-
-<p align="center">
-  <a href="https://query.farm"><img src="https://query.farm/Query_Farm_Logo_Transparent.png" alt="Query.Farm" width="200"></a>
+  A <a href="https://query.farm/vgi/">VGI</a> worker, built by <a href="https://query.farm">🚜 Query.Farm</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/Query-farm/vgi-typesafe/actions/workflows/ci.yml"><img src="https://github.com/Query-farm/vgi-typesafe/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Query-farm/vgi-typesafe/actions/workflows/live.yml"><img src="https://github.com/Query-farm/vgi-typesafe/actions/workflows/live.yml/badge.svg" alt="Live API"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/python-3.13%2B-blue.svg" alt="Python 3.13+">
+  <a href="https://duckdb.org"><img src="https://img.shields.io/badge/DuckDB-extension-fff000.svg?logo=duckdb&logoColor=black" alt="DuckDB"></a>
   <a href="https://query.farm/vgi/"><img src="https://img.shields.io/badge/VGI-Vector%20Gateway%20Interface-2f7d32.svg" alt="VGI"></a>
+  <a href="https://pypi.org/project/vgi-python/"><img src="https://img.shields.io/badge/vgi--python-%E2%89%A50.34.0-2f7d32.svg" alt="vgi-python >= 0.34.0"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/lint-ruff-261230.svg?logo=ruff&logoColor=d7ff64" alt="Ruff"></a>
+  <a href="https://mypy-lang.org/"><img src="https://img.shields.io/badge/mypy-strict-2a6db2.svg" alt="mypy strict"></a>
+  <img src="https://img.shields.io/badge/tests-464%20offline%20%C2%B7%2026%20live-2f7d32.svg" alt="464 offline tests, 26 live">
+  <a href="https://github.com/Query-farm/vgi-lint-check"><img src="https://img.shields.io/badge/vgi--lint-100%2F100%20L2-2f7d32.svg" alt="vgi-lint 100/100, assurance L2 behavioural"></a>
+</p>
+
+<p align="center">
+  <a href="https://query.farm">
+    <img src="https://raw.githubusercontent.com/Query-farm/vgi-typesafe/main/docs/query-farm-logo.png" alt="Query.Farm" width="200">
+  </a>
 </p>
 
 ---
