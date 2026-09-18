@@ -16,6 +16,7 @@ synced venv, which is exactly the environment these bugs hide in.
 from __future__ import annotations
 
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -116,3 +117,31 @@ class TestInstallableByAnyone:
         scripts = PYPROJECT["project"]["scripts"]
         assert scripts["vgi-typesafe-http"] == "vgi_typesafe.worker:main_http"
         assert PYPROJECT["project"]["optional-dependencies"]["serve"], "no extra installs the HTTP transport"
+
+
+class TestReleasable:
+    """`release.yml` refuses a tag that disagrees with the package; prove it can agree."""
+
+    def test_the_version_gate_accepts_this_version(self) -> None:
+        """The fleet's check-version.sh greps pyproject.toml, where our version is not.
+
+        `dynamic = ["version"]` puts it in ``vgi_typesafe/__init__.py`` instead, so the
+        stock script matches nothing and would pass every tag. This runs the real gate
+        against the real version, which is the only way to see that it still reads it.
+        """
+        from vgi_typesafe import __version__
+
+        script = PROJECT / "ci" / "check-version.sh"
+        assert script.stat().st_mode & 0o111, f"{script.name} is not executable; the workflow runs it directly"
+        ok = subprocess.run([str(script), f"v{__version__}"], capture_output=True, text=True, cwd=PROJECT)
+        assert ok.returncode == 0, ok.stderr
+        bad = subprocess.run([str(script), "v0.0.0-nope"], capture_output=True, text=True, cwd=PROJECT)
+        assert bad.returncode != 0, "the gate accepted a tag that does not match the package"
+
+    def test_the_version_is_pep440_and_single_sourced(self) -> None:
+        """Two places to bump is one place to forget."""
+        from vgi_typesafe import __version__
+
+        assert re.fullmatch(r"\d+\.\d+\.\d+", __version__), f"{__version__} is not a plain X.Y.Z release version"
+        assert "version" not in PYPROJECT["project"], "version is declared statically as well as dynamically"
+        assert PYPROJECT["tool"]["hatch"]["version"]["path"] == "vgi_typesafe/__init__.py"

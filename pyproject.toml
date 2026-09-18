@@ -5,7 +5,22 @@ description = "A VGI (Vector Gateway Interface) worker exposing TypeSafe System 
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "Query Farm", email = "hello@query.farm" }]
-keywords = ["vgi", "duckdb", "arrow", "typesafe", "classification", "sql"]
+keywords = [
+    "vgi",
+    "duckdb",
+    "duckdb-extension",
+    "arrow",
+    "apache-arrow",
+    "typesafe",
+    "classification",
+    "text-classification",
+    "structured-output",
+    "table-functions",
+    "llm",
+    "ai",
+    "sql",
+    "query-farm",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
