@@ -32,12 +32,6 @@
   <a href="https://github.com/Query-farm/vgi-lint-check"><img src="https://img.shields.io/badge/vgi--lint-100%2F100%20L2-2f7d32.svg" alt="vgi-lint 100/100, assurance L2 behavioural"></a>
 </p>
 
-<p align="center">
-  <a href="https://query.farm">
-    <img src="https://raw.githubusercontent.com/Query-farm/vgi-typesafe/main/docs/query-farm-logo.png" alt="Query.Farm" width="200">
-  </a>
-</p>
-
 ---
 
 ```sql
