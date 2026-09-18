@@ -12,8 +12,11 @@ probability) and ``score`` (a position on an ordered scale). :func:`ask_many` is
 the general path; :func:`ask_choices` is the one-question shorthand ``choice()``
 uses, and rides on it.
 
-Failure policy: 429 (rate limited) and 529 (overloaded) are retried with
-exponential backoff, as the API reference asks. Everything else raises
+Failure policy: 408, 429 and every 5xx (which includes 529, "overloaded") are
+retried with jittered exponential backoff, honouring the server's own
+``Retry-After``; so are transport failures. That mirrors the official SDK's
+default policy rather than the narrower 429/529 the API reference calls out.
+Everything else raises
 :class:`TypeSafeError` and surfaces as a DuckDB error — a judgment that silently
 became NULL would be indistinguishable from a NULL input.
 """
@@ -21,6 +24,7 @@ became NULL would be indistinguishable from a NULL input.
 from __future__ import annotations
 
 import json
+import random
 import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -49,10 +53,27 @@ MAX_SCORE_LEVELS = 10
 #: The name ``choice()`` gives its single question in each request.
 QUESTION_ID = "choice"
 
-RETRY_STATUSES = frozenset({429, 529})
+#: Statuses worth another attempt, matching the official SDK's retry policy:
+#: 408, 429, and the whole 5xx range (which includes 529, "overloaded"). The
+#: API reference only calls out 429 and 529, but a 502/503 from a proxy in
+#: front of the API is just as transient and just as pointless to fail a query
+#: over.
+RETRY_STATUSES = frozenset({408, 429})
+RETRY_STATUS_FLOOR = 500
+
 MAX_ATTEMPTS = 5
 BACKOFF_BASE_SECONDS = 0.5
 BACKOFF_CAP_SECONDS = 8.0
+#: Fraction of each delay that is randomly shaved off. Without jitter, every
+#: request in a batch that hits the same rate limit retries in lockstep and
+#: hits it again together — and this worker issues up to `concurrency` requests
+#: at once, so it manufactures exactly that herd. The SDK uses 0.25.
+BACKOFF_JITTER = 0.25
+
+
+def _is_retryable(status: int) -> bool:
+    """Whether another attempt at ``status`` is worth making."""
+    return status in RETRY_STATUSES or status >= RETRY_STATUS_FLOOR
 
 
 class TypeSafeError(RuntimeError):
@@ -111,24 +132,67 @@ def _error_detail(response: httpx.Response) -> str:
     return str(body)[:300]
 
 
-def _retry_delay(response: httpx.Response, attempt: int) -> float:
-    """Honour ``Retry-After`` when the server sends a usable one, else back off."""
-    header = response.headers.get("retry-after", "")
-    try:
-        return float(min(max(float(header), 0.0), BACKOFF_CAP_SECONDS))
-    except ValueError:
-        return float(min(BACKOFF_BASE_SECONDS * 2**attempt, BACKOFF_CAP_SECONDS))
+def _server_delay(response: httpx.Response) -> float | None:
+    """The delay the server asked for, in seconds, or None if it asked for none.
+
+    Both spellings the SDK honours: ``Retry-After`` (seconds) and the
+    millisecond form some proxies send.
+
+    Args:
+        response: The response carrying the headers.
+
+    Returns:
+        The requested delay in seconds, clamped to the backoff cap, or None.
+    """
+    for header, divisor in (("retry-after-ms", 1000.0), ("retry-after", 1.0)):
+        raw = response.headers.get(header)
+        if not raw:
+            continue
+        try:
+            return min(max(float(raw) / divisor, 0.0), BACKOFF_CAP_SECONDS)
+        except ValueError:
+            # A date-formatted Retry-After is legal but rare; fall through to
+            # our own backoff rather than trying to parse a clock.
+            continue
+    return None
+
+
+def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
+    """How long to wait before attempt ``attempt + 1``.
+
+    Args:
+        response: The response that prompted the retry, or None for a
+            transport-level failure where there is no response at all.
+        attempt: Zero-based index of the attempt that just failed.
+
+    Returns:
+        Seconds to sleep, jittered.
+    """
+    if response is not None:
+        asked = _server_delay(response)
+        if asked is not None:
+            return asked
+    delay = min(BACKOFF_BASE_SECONDS * 2**attempt, BACKOFF_CAP_SECONDS)
+    # Shave, never add: the cap stays a cap.
+    return float(delay * (1.0 - random.random() * BACKOFF_JITTER))
 
 
 def _post(client: httpx.Client, credentials: Credentials, payload: dict[str, Any]) -> dict[str, Any]:
     url = f"{credentials.base_url}{SYSTEM_ONE_PATH}"
     headers = {"Authorization": f"Bearer {credentials.api_key}"}
     for attempt in range(MAX_ATTEMPTS):
+        last = attempt == MAX_ATTEMPTS - 1
         try:
             response = client.post(url, json=payload, headers=headers)
         except httpx.HTTPError as exc:
-            raise TypeSafeError(f"could not reach TypeSafe at {url}: {exc}") from exc
-        if response.status_code in RETRY_STATUSES and attempt < MAX_ATTEMPTS - 1:
+            # A dropped connection or a read timeout is transient in exactly the
+            # way a 503 is; the SDK retries these too. Only give up on the last
+            # attempt, and then say which endpoint was unreachable.
+            if last:
+                raise TypeSafeError(f"could not reach TypeSafe at {url}: {exc}") from exc
+            time.sleep(_retry_delay(None, attempt))
+            continue
+        if _is_retryable(response.status_code) and not last:
             time.sleep(_retry_delay(response, attempt))
             continue
         if response.status_code == 401:

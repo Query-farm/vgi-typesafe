@@ -176,8 +176,11 @@ def _question(name: str, raw: Any) -> dict[str, Any]:
         raise ValueError(
             f"ask(): question {name!r} has type {raw.get('type')!r}; expected one of {', '.join(api.QUESTION_TYPES)}"
         )
+    # TypeSafe accepts a string, an object or an array here, for every question
+    # type — a structured instruction is how you give the model a rubric rather
+    # than a sentence. Only emptiness is an error.
     instructions = raw.get("instructions")
-    if not isinstance(instructions, str) or not instructions.strip():
+    if instructions is None or (isinstance(instructions, str) and not instructions.strip()):
         raise ValueError(f"ask(): question {name!r} requires 'instructions'")
     question: dict[str, Any] = {"type": kind, "instructions": instructions}
     criteria = raw.get("criteria")
@@ -407,9 +410,11 @@ class AskFunction(RowTransformFunction[AskArgs]):
                 "- `choice` — `criteria`: struct or `MAP` of option -> description (1-255 options).\n"
                 "- `score` — `criteria`: ordered list of 2-10 level descriptions, lowest first.\n"
                 "- `noul` — optional `criteria` with `'true'` and/or `'false'` descriptions.\n\n"
-                "A criterion may be a string or a structured `{what, not_for, examples}` object. A "
-                "JSON string or a `MAP` is accepted in place of the struct. Questions are validated at "
-                "bind, before any row is sent.\n\n"
+                "`instructions` and every criterion may be a plain string or a structured object — "
+                "TypeSafe accepts both, and a rubric (`{what, not_for, examples}` for a choice "
+                "option, `{summary, signals}` for a score level) is what separates options a model "
+                "keeps confusing. A JSON string or a `MAP` is accepted in place of the struct. "
+                "Questions are validated at bind, before any row is sent.\n\n"
                 "### Output\n\n"
                 "One `STRUCT` column per question, named after it:\n\n"
                 "| Type | Fields |\n| --- | --- |\n"

@@ -262,3 +262,27 @@ class TestStatesOf:
             {"n": 0, "flag": None, "s": None},
             {"n": None, "flag": False, "s": None},
         ]
+
+
+class TestStructuredInstructions:
+    """TypeSafe accepts a string, object or array for `instructions`, on every type."""
+
+    @pytest.mark.parametrize(
+        "instructions",
+        [
+            "Which team should handle this?",
+            {"what": "Route the ticket", "examples": ["a lost parcel -> shipping"]},
+            ["Route the ticket.", "Prefer the more specific team."],
+        ],
+        ids=["string", "object", "array"],
+    )
+    def test_every_shape_the_api_accepts_passes_through(self, instructions: Any) -> None:
+        """A rubric is how you separate options the model keeps confusing."""
+        question = {**CHOICE, "instructions": instructions}
+        assert questions_of({"c": question})["c"]["instructions"] == instructions
+
+    @pytest.mark.parametrize("instructions", [None, "", "   "])
+    def test_only_emptiness_is_rejected(self, instructions: Any) -> None:
+        """A missing instruction is a mistake; a structured one is not."""
+        with pytest.raises(ValueError, match="requires 'instructions'"):
+            questions_of({"c": {**CHOICE, "instructions": instructions}})

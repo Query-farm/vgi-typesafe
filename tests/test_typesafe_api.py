@@ -146,7 +146,63 @@ class TestRetries:
         (answer,) = _ask(_client(handler), ["lost package"])
         assert answer is not None and answer.choice == "shipping"
         assert len(attempts) == 3
-        assert _no_sleep == [0.5, 1.0], "exponential backoff"
+        # Jittered, so assert the shape rather than exact values: each delay sits
+        # inside its jitter window, and the second is longer than the first.
+        first, second = _no_sleep
+        assert 0.5 * (1 - api.BACKOFF_JITTER) <= first <= 0.5
+        assert 1.0 * (1 - api.BACKOFF_JITTER) <= second <= 1.0
+        assert second > first
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 529])
+    def test_server_errors_are_retried(self, status: int, _no_sleep: list[float]) -> None:
+        """The SDK retries the whole 5xx range, not just the 529 the API reference names."""
+        attempts: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts.append(1)
+            return httpx.Response(status) if len(attempts) < 2 else _mock_backend(request)
+
+        (answer,) = _ask(_client(handler), ["lost package"])
+        assert answer is not None and len(attempts) == 2
+
+    def test_a_transport_failure_is_retried_before_giving_up(self, _no_sleep: list[float]) -> None:
+        """A dropped connection is as transient as a 503; only the last attempt raises."""
+        attempts: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts.append(1)
+            if len(attempts) < 3:
+                raise httpx.ConnectError("connection reset")
+            return _mock_backend(request)
+
+        (answer,) = _ask(_client(handler), ["lost package"])
+        assert answer is not None and len(attempts) == 3
+
+    def test_retry_after_ms_is_honoured(self, _no_sleep: list[float]) -> None:
+        """Some proxies send the millisecond spelling; the SDK reads both."""
+        attempts: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts.append(1)
+            if len(attempts) == 1:
+                return httpx.Response(429, headers={"retry-after-ms": "2500"})
+            return _mock_backend(request)
+
+        _ask(_client(handler), ["x"])
+        assert _no_sleep == [2.5]
+
+    def test_an_unparseable_retry_after_falls_back_to_backoff(self, _no_sleep: list[float]) -> None:
+        """A date-formatted Retry-After is legal; it must not crash or mean zero."""
+        attempts: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts.append(1)
+            if len(attempts) == 1:
+                return httpx.Response(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
+            return _mock_backend(request)
+
+        _ask(_client(handler), ["x"])
+        assert _no_sleep and 0 < _no_sleep[0] <= 0.5
 
     def test_retry_after_is_honoured(self, _no_sleep: list[float]) -> None:
         """Ignoring the server's own backoff is how you get rate-limited harder."""
@@ -174,9 +230,9 @@ class TestRetries:
         assert excinfo.value.status == 429
         assert len(attempts) == api.MAX_ATTEMPTS
 
-    @pytest.mark.parametrize("status", [400, 401, 422, 500])
-    def test_other_errors_are_not_retried(self, status: int) -> None:
-        """Retrying a 401 or a 422 just spends money to fail again."""
+    @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+    def test_client_errors_are_not_retried(self, status: int) -> None:
+        """Retrying a 401 or a 422 just spends money to be told the same thing."""
         attempts: list[int] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
