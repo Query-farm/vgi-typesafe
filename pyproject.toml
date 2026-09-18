@@ -19,13 +19,13 @@ classifiers = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "vgi-python>=0.33.0",
+    "vgi-python>=0.34.0",
     "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
 # HTTP-serving extra — what `serve.py` and the Docker image need.
-serve = ["vgi-python[http]>=0.33.0"]
+serve = ["vgi-python[http]>=0.34.0"]
 
 [dependency-groups]
 dev = [

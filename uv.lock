@@ -855,7 +855,7 @@ wheels = [
 
 [[package]]
 name = "vgi-python"
-version = "0.33.0"
+version = "0.34.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -865,9 +865,9 @@ dependencies = [
     { name = "typer" },
     { name = "vgi-rpc" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7d/f1/5b7798ead96746df521207f2681636d4d627c75574830651bb4ce40889f4/vgi_python-0.33.0.tar.gz", hash = "sha256:986fa215895fb2f0c41242a4519ab455d73ce8856012a6d080f4520ee3acbc34", size = 4337454, upload-time = "2026-09-17T16:37:02.732Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/29/3d9d12b8a6fb9e836c5d17167b8220a6c632825808f26bcbcc5b4a70d629/vgi_python-0.34.0.tar.gz", hash = "sha256:562d6ee1e156a05806aec1220cf876a5ea83f4e5f43588943fc8af061e10382d", size = 4340189, upload-time = "2026-09-18T03:49:48.343Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e4/c3/f87fffb3997c003fe9bfc53128bca52593859d0c36c4d84f3d883c9ca6cd/vgi_python-0.33.0-py3-none-any.whl", hash = "sha256:e643518ff2503f04b6cf94052b8d023e3304ec147a9e5f95bae9a3da647ad72c", size = 1184157, upload-time = "2026-09-17T16:37:00.78Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/5f/c67f30152cbe61403b0b8ef05e1945df3123097fb1500dfdb1c5866a437b/vgi_python-0.34.0-py3-none-any.whl", hash = "sha256:8f26c73dbd19306e45136c1463af2fd6d0a7f51ef0d19b008148dbe8c20c6d22", size = 1185584, upload-time = "2026-09-18T03:49:46.203Z" },
 ]
 
 [package.optional-dependencies]
@@ -926,8 +926,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
-    { name = "vgi-python", specifier = ">=0.33.0" },
-    { name = "vgi-python", extras = ["http"], marker = "extra == 'serve'", specifier = ">=0.33.0" },
+    { name = "vgi-python", specifier = ">=0.34.0" },
+    { name = "vgi-python", extras = ["http"], marker = "extra == 'serve'", specifier = ">=0.34.0" },
 ]
 provides-extras = ["serve"]
 

@@ -117,10 +117,16 @@ class AskArgs:
     """``ask(state, questions => ...)``."""
 
     state: Annotated[AnyArrow, Arg(0, doc="The content to evaluate — a piece of text, a row, or a structured value")]
+    # Required — on_bind rejects a call without it. Declaring it nullable WITH a
+    # default is what lets that rejection happen: an argument with no default is
+    # rejected during parsing, before on_bind runs, and the caller sees a bare
+    # `KeyError: "Argument 'questions': not found"` instead of the message below
+    # that names the argument and shows its shape. Needs vgi-python >= 0.34.
     questions: Annotated[
-        AnyArrow,
+        AnyArrow | None,
         Arg(
             "questions",
+            default=None,
             doc=(
                 "One entry per question, keyed by the name you want its output column to have. "
                 "Each entry carries the question type, its instructions, and (for most types) its "
