@@ -1,0 +1,33 @@
+# vgi-lint configuration for the TypeSafe worker.
+#
+#   vgi-lint lint --audit-waivers
+#
+# re-runs the rules this waiver silences and fails if it has stopped buying
+# anything — a waiver that suppresses nothing is a standing claim nobody
+# revisits, and it hides the moment the rule starts applying.
+
+location = "uv run --no-sources typesafe_worker.py"
+select = ["ALL"]
+fail_on = "warning"
+
+[per-object]
+# `ask()` names its result columns after the caller's own questions: ask(...,
+# questions => {'dept': ..., 'urgent': ...}) returns columns `dept` and
+# `urgent`. VGI910 DESCRIBEs the shipped example and checks each returned column
+# against a name listed in a vgi.result_dynamic_columns_md variant table, so it
+# reports the example's own question names as undeclared.
+#
+# The rule cannot be satisfied here rather than merely being inconvenient: the
+# set of column names is unbounded and chosen at call time, so no fixed table
+# can enumerate it. Declaring the example's names (`dept`, `urgent`, `severity`)
+# would be worse than silence — it would assert that ask() always returns those
+# three columns, which is false for every other call.
+#
+# What the tag DOES declare is the part that is fixed and checkable by a reader:
+# one variant per question `type`, giving the STRUCT each produces, plus the
+# always-present `usage` column. tests/test_ask_function.py and
+# tests/test_end_to_end.py pin those shapes by DESCRIBE, which is the coverage
+# VGI910 would otherwise provide.
+"typesafe.main.ask" = { ignore = [
+  { code = "VGI910", kind = "domain-exemption", reason = "result column NAMES are the caller's question keys, so no fixed variant table can enumerate them; the per-type STRUCT shapes are declared and are pinned by DESCRIBE tests" },
+] }

@@ -179,13 +179,19 @@ The worker is linted by [vgi-lint-check](https://github.com/Query-farm/vgi-lint-
 checks that the catalog documents itself well enough for an agent to use it:
 
 ```sh
-uvx --from vgi-lint-check vgi-lint lint "uv run typesafe_worker.py" \
-    --no-execute --no-check-links --fail-on warning   # currently 100/100, 0 findings
+# Point the worker at the bundled mock so no example is billed, then run BOTH tiers.
+uv run vgi-typesafe-mock --port 8787 --api-key k &
+TYPESAFE_API_KEY=k TYPESAFE_BASE_URL=http://127.0.0.1:8787 \
+  uvx --from vgi-lint-check vgi-lint lint --execute --audit-waivers --no-check-links
+# 100/100, 0 findings, Assurance L2 behavioural
 ```
 
-CI runs the **structural** tier only (`--no-execute`): the executable tier would bill every
-shipped example against the real TypeSafe API. The one `vgi.executable_examples` entry is a
-`DESCRIBE`, which binds without issuing a request, so it is runnable by anyone.
+CI runs the **behavioural** tier (`--execute`), not just the structural one — it attaches the
+worker and runs the shipped examples, which is the only way a declared result schema gets checked
+against what a function actually returns. Running it against the mock keeps it free and keyless.
+Settings live in `vgi-lint.toml`, including one documented waiver: `ask()` names its result columns
+after the caller's own questions, so no fixed variant table can enumerate them (`--audit-waivers`
+fails if that waiver ever stops buying anything).
 
 `vgi.agent_test_tasks` publishes only each task's `{name, prompt}`. The graders live in
 `vgi-agent-tests.yaml`, outside the catalog, so an agent being measured by `vgi-lint simulate`

@@ -56,11 +56,23 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --no-sources --all-extras
-      # Structural tier only: --no-execute, because every example here would
-      # otherwise be billed against the real TypeSafe API. The executable tier
-      # belongs in a scheduled live workflow with a key.
-      - name: vgi-lint (structural)
+      # The BEHAVIOURAL tier (VGI9xx), not just the structural one. It attaches
+      # the worker and DESCRIBEs/runs the shipped examples, which is how it
+      # checks a declared result schema against what a function really returns
+      # — nothing the structural tier can see. `--no-execute` was cheaper and
+      # missed exactly that.
+      #
+      # Pointing the worker at the bundled mock through its own environment
+      # fallback keeps this free and keyless: no example is billed, and CI
+      # never needs the production key. --audit-waivers re-runs the rules our
+      # waiver silences and fails if it has stopped buying anything.
+      - name: vgi-lint (structural + behavioural, against the mock)
         run: |
-          uvx --no-sources --from vgi-lint-check vgi-lint lint \
-            "uv run --no-sources typesafe_worker.py" \
-            --no-execute --no-check-links --fail-on warning
+          uv run --no-sources vgi-typesafe-mock --port 8787 --api-key ci-key &
+          for _ in $(seq 1 50); do
+            curl -sf -o /dev/null -X POST http://127.0.0.1:8787/ && break
+            sleep 0.2
+          done
+          TYPESAFE_API_KEY=ci-key TYPESAFE_BASE_URL=http://127.0.0.1:8787 \
+            uvx --no-sources --from vgi-lint-check vgi-lint lint \
+              --execute --audit-waivers --no-check-links
