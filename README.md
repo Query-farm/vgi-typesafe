@@ -78,7 +78,8 @@ ordinary scalar expression. `models()` takes no input at all.
 
 ## `ask(state, questions => ...)`
 
-A System One request carries one `state` and a map of named questions that the API answers in parallel —
+A [System One](https://docs.typesafe.ai/concepts/system-one) request carries one
+[`state`](https://docs.typesafe.ai/concepts/state) and a map of named questions that the API answers in parallel —
 so five questions about a row cost the same single request as one.
 
 ### State — the positional argument
@@ -102,11 +103,13 @@ A struct keyed by question name; the name becomes the output column.
 
 | `type` | `criteria` | Answer column |
 | --- | --- | --- |
-| `choice` | struct or `MAP` of option → description (1–255) | `STRUCT(choice VARCHAR, confidence DOUBLE, probabilities MAP(VARCHAR, DOUBLE))` |
-| `noul` | optional `{'true': ..., 'false': ...}` | `STRUCT(noul DOUBLE)` — near 1 is yes, near 0 is no, 0.5 is genuinely undecided |
-| `score` | ordered list of 2–10 levels, lowest first | `STRUCT(score DOUBLE, confidence DOUBLE, probabilities MAP(INTEGER, DOUBLE))`, keyed by level (0 = first) |
+| [`choice`](https://docs.typesafe.ai/primitives/choice) | struct or `MAP` of option → description (1–255) | `STRUCT(choice VARCHAR, confidence DOUBLE, probabilities MAP(VARCHAR, DOUBLE))` |
+| [`noul`](https://docs.typesafe.ai/primitives/noul) | optional `{'true': ..., 'false': ...}` | `STRUCT(noul DOUBLE)` — near 1 is yes, near 0 is no, 0.5 is genuinely undecided |
+| [`score`](https://docs.typesafe.ai/primitives/score) | ordered list of 2–10 levels, lowest first | `STRUCT(score DOUBLE, confidence DOUBLE, probabilities MAP(INTEGER, DOUBLE))`, keyed by level (0 = first) |
 
-A criterion may be a plain string or a structured `{'what': ..., 'not_for': ..., 'examples': [...]}` object.
+A criterion may be a plain string or a
+[structured object](https://docs.typesafe.ai/primitives/advanced) — `{'what': ..., 'not_for': ...,
+'examples': [...]}` for a choice option, `{'summary': ..., 'signals': [...]}` for a score level.
 A trailing `usage STRUCT(model, input_tokens, output_tokens)` column reports what each row cost, so a
 question may not be named `usage`. A JSON string or a `MAP` is accepted in place of the struct literal.
 
@@ -124,6 +127,9 @@ Other named arguments: `model =>` (default `jev-latest`), `concurrency =>` (defa
 ### Row semantics
 
 - **Strictly one output row per input row**, so answers always pair with the row that produced them.
+- **[`confidence`](https://docs.typesafe.ai/confidence) is how concentrated the distribution was** —
+  it is the field to filter on when routing the clear cases automatically. A `noul` has none, because
+  a probability near 0.5 already says the model could not decide.
 - **A NULL state makes no request** and yields NULL answers. So does a structured state with *no non-null
   content* — `{'message': NULL, 'tier': NULL}` is not NULL in SQL, but there is nothing in it to judge, and
   asking anyway would bill a request for a meaningless answer. (`0`, `false` and `''` are content.)
@@ -317,8 +323,8 @@ that the two agree on the same row.
 
 ## `models()`
 
-Every question table function takes `model =>` and defaults it to `jev-latest`. Nothing else in the
-catalog says what else is allowed — and TypeSafe publishes a preview line alongside the stable one,
+Every question table function takes `model =>` and defaults it to `jev-latest`
+([model docs](https://docs.typesafe.ai/models)). Nothing else in the catalog says what else is allowed — and TypeSafe publishes a preview line alongside the stable one,
 so the default is not the only answer.
 
 ```sql
@@ -468,8 +474,8 @@ module, not a request path.
 
 ## Where we are stricter than the API
 
-Production is laxer than its own reference in two places. We follow the reference, and record both
-here so the gap stays a decision rather than a surprise:
+Production is laxer than its own [API reference](https://docs.typesafe.ai/api) in two places. We
+follow the reference, and record both here so the gap stays a decision rather than a surprise:
 
 | | Documented | Production actually | We |
 | --- | --- | --- | --- |
