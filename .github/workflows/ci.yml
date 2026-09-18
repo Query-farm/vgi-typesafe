@@ -69,6 +69,11 @@ jobs:
       - name: vgi-lint (structural + behavioural, against the mock)
         run: |
           uv run --no-sources vgi-typesafe-mock --port 8787 --api-key ci-key &
+          mock_pid=$!
+          # Stop it however this step ends. Left running, it holds the uv cache
+          # lock and the post-job `uv cache prune --ci` deadlocks for 300s and
+          # fails the job — with the lint itself already green.
+          trap 'kill "$mock_pid" 2>/dev/null || true' EXIT
           for _ in $(seq 1 50); do
             curl -sf -o /dev/null -X POST http://127.0.0.1:8787/ && break
             sleep 0.2
