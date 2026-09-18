@@ -32,9 +32,7 @@ def _pep723_dependencies(script: Path) -> list[str]:
     text = script.read_text()
     block = re.search(r"^# /// script\n(.*?)^# ///$", text, re.M | re.S)
     assert block, f"{script.name} has no PEP-723 header; `uv run` cannot resolve it standalone"
-    meta = tomllib.loads(
-        "".join(line.removeprefix("# ").removeprefix("#") for line in block.group(1).splitlines(True))
-    )
+    meta = tomllib.loads("".join(line.removeprefix("# ").removeprefix("#") for line in block.group(1).splitlines(True)))
     return [re.split(r"[<>=!\[]", dep)[0].strip() for dep in meta.get("dependencies", [])]
 
 
@@ -47,12 +45,11 @@ class TestEntryScriptsAreSelfContained:
 
     @pytest.mark.parametrize("name", ENTRY_SCRIPTS)
     def test_declares_every_runtime_dependency(self, name: str) -> None:
+        """A missing one fails only at ATTACH, on someone else's machine."""
         declared = set(_pep723_dependencies(PROJECT / name))
         required = _requirement_names(PYPROJECT["project"]["dependencies"])
         missing = required - declared
-        assert not missing, (
-            f"{name}'s PEP-723 header is missing {sorted(missing)} from [project.dependencies]"
-        )
+        assert not missing, f"{name}'s PEP-723 header is missing {sorted(missing)} from [project.dependencies]"
 
     @pytest.mark.parametrize("name", ENTRY_SCRIPTS)
     def test_declares_nothing_unknown(self, name: str) -> None:
@@ -70,28 +67,33 @@ class TestEntryScriptsAreSelfContained:
             for line in (PROJECT / name).read_text().splitlines()
             if line.startswith(("import ", "from ")) and "__future__" not in line
         ]
-        assert body and all("vgi_typesafe" in line for line in body), (
-            f"{name} imports more than vgi_typesafe: {body}"
-        )
+        assert body and all("vgi_typesafe" in line for line in body), f"{name} imports more than vgi_typesafe: {body}"
 
 
 class TestLicensing:
+    """What the project claims about its license must be what it ships."""
+
     def test_the_declared_license_is_actually_shipped(self) -> None:
+        """The metadata declared MIT with no LICENSE file behind it."""
         assert PYPROJECT["project"]["license"] == "MIT"
         text = (PROJECT / "LICENSE").read_text()
         assert text.startswith("MIT License")
         assert text.rstrip().endswith("SOFTWARE.")
 
     def test_the_copyright_names_query_farm(self) -> None:
+        """Provenance has to be in the file, not just in a tag."""
         assert "Copyright (c) 2026 Query Farm LLC - https://query.farm" in (PROJECT / "LICENSE").read_text()
 
     def test_every_module_carries_the_copyright_header(self) -> None:
+        """The fleet convention; easy to forget on a new file."""
         modules = sorted(PROJECT.glob("vgi_typesafe/*.py")) + [PROJECT / n for n in ENTRY_SCRIPTS]
         missing = [p.name for p in modules if not p.read_text().startswith("# Copyright 2026 Query Farm LLC")]
         assert not missing, f"missing the copyright header: {missing}"
 
 
 class TestInstallableByAnyone:
+    """The project must resolve on a machine that has never seen our checkouts."""
+
     def test_no_local_path_sources(self) -> None:
         """A path pin (e.g. vgi-python = {path = '../vgi-python'}) breaks CI and every other machine."""
         assert "sources" not in PYPROJECT.get("tool", {}).get("uv", {}), (
@@ -100,10 +102,12 @@ class TestInstallableByAnyone:
         )
 
     def test_dependencies_are_released_versions(self) -> None:
+        """A URL or path requirement is not installable from PyPI."""
         for spec in PYPROJECT["project"]["dependencies"]:
             assert "@" not in spec and "file://" not in spec, f"{spec} is not a released requirement"
 
     def test_typing_is_advertised(self) -> None:
+        """Without the marker, consumers get no types from a fully annotated package."""
         assert (PROJECT / "vgi_typesafe" / "py.typed").is_file(), "annotated package without a PEP 561 marker"
         assert "Typing :: Typed" in PYPROJECT["project"]["classifiers"]
 

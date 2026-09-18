@@ -132,9 +132,7 @@ def _post(client: httpx.Client, credentials: Credentials, payload: dict[str, Any
             time.sleep(_retry_delay(response, attempt))
             continue
         if response.status_code == 401:
-            raise TypeSafeError(
-                f"TypeSafe rejected the API key (HTTP 401): {_error_detail(response)}", status=401
-            )
+            raise TypeSafeError(f"TypeSafe rejected the API key (HTTP 401): {_error_detail(response)}", status=401)
         if response.status_code >= 400:
             raise TypeSafeError(
                 f"TypeSafe returned HTTP {response.status_code}: {_error_detail(response)}",
@@ -154,9 +152,7 @@ def _number(answer: dict[str, Any], key: str, question_id: str) -> float:
     try:
         return float(answer[key])
     except (KeyError, TypeError, ValueError) as exc:
-        raise TypeSafeError(
-            f"TypeSafe answer {question_id!r} has no numeric {key!r}: {str(answer)[:300]}"
-        ) from exc
+        raise TypeSafeError(f"TypeSafe answer {question_id!r} has no numeric {key!r}: {str(answer)[:300]}") from exc
 
 
 def _parse_answer(question_id: str, question: Mapping[str, Any], answer: Any) -> dict[str, Any]:

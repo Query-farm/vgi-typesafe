@@ -32,13 +32,18 @@ SCORE = {"type": "score", "instructions": "How much?", "criteria": ["low", "high
 
 
 class TestQuestionsOf:
+    """Normalising and validating `questions`, whose errors a user reads directly."""
+
     def test_a_struct_literal(self) -> None:
+        """The form a SQL user writes by hand."""
         assert questions_of({"c": CHOICE, "n": NOUL, "s": SCORE}) == {"c": CHOICE, "n": NOUL, "s": SCORE}
 
     def test_order_is_preserved_because_it_is_the_column_order(self) -> None:
+        """Question order is the output column order."""
         assert list(questions_of({"z": NOUL, "a": NOUL, "m": NOUL})) == ["z", "a", "m"]
 
     def test_a_json_string(self) -> None:
+        """A caller may prefer JSON text to a struct literal."""
         text = '{"n": {"type": "noul", "instructions": "Is it?"}}'
         assert questions_of(text) == {"n": NOUL}
 
@@ -48,23 +53,29 @@ class TestQuestionsOf:
         assert questions_of(as_map) == {"n": NOUL}
 
     def test_choice_criteria_given_as_a_map(self) -> None:
+        """MAP and struct literals must reach the API identically."""
         question = {**CHOICE, "criteria": [("a", "x"), ("b", "y")]}
         assert questions_of({"c": question}) == {"c": CHOICE}
 
     def test_an_any_arrow_wrapper_and_an_arrow_scalar_are_unwrapped(self) -> None:
+        """An ANY-typed arg arrives wrapped; unwrapping is easy to get wrong and hard to notice."""
+
         class Wrapped:
             value = pa.scalar({"n": NOUL})
 
         assert questions_of(Wrapped()) == {"n": NOUL}
 
     def test_type_is_case_insensitive(self) -> None:
+        """SQL is case-insensitive elsewhere; a capitalised type should not fail."""
         assert questions_of({"n": {**NOUL, "type": "NOUL"}})["n"]["type"] == "noul"
 
     def test_structured_criteria_pass_through(self) -> None:
+        """TypeSafe accepts {what, not_for, examples} per option; we must not flatten it."""
         criteria = {"a": {"what": "A things", "not_for": "B things", "examples": ["a1"]}, "b": "plain"}
         assert questions_of({"c": {**CHOICE, "criteria": criteria}})["c"]["criteria"] == criteria
 
     def test_noul_criteria_are_optional_and_partial(self) -> None:
+        """A noul question may define one side, both, or neither."""
         assert "criteria" not in questions_of({"n": NOUL})["n"]
         assert questions_of({"n": {**NOUL, "criteria": {"true": "yes"}}})["n"]["criteria"] == {"true": "yes"}
 
@@ -97,12 +108,16 @@ class TestQuestionsOf:
         ],
     )
     def test_invalid_questions_name_the_problem(self, raw: Any, fragment: str) -> None:
+        """These messages are the only documentation a user gets at the moment they are stuck."""
         with pytest.raises(ValueError, match=fragment):
             questions_of(raw)
 
 
 class TestOutputSchema:
+    """The columns a caller gets, derived entirely from the questions."""
+
     def test_one_struct_per_question_then_usage(self) -> None:
+        """The trailing usage column is why a question may not be named it."""
         schema = output_schema_of(questions_of({"c": CHOICE, "n": NOUL, "s": SCORE}))
         assert schema.names == ["c", "n", "s", "usage"]
         assert schema.types == [
@@ -113,15 +128,19 @@ class TestOutputSchema:
         ]
 
     def test_the_column_comment_says_what_was_asked(self) -> None:
+        """DESCRIBE should recall the question, not just the type."""
         schema = output_schema_of(questions_of({"n": NOUL}))
         assert schema.field("n").metadata == {b"comment": b"noul: Is it?"}
 
     def test_score_probabilities_are_keyed_by_integer_level(self) -> None:
+        """Levels are ordinal, so an INTEGER key sorts and compares correctly; the API sends strings."""
         assert ANSWER_TYPES["score"].field("probabilities").type == pa.map_(pa.int32(), pa.float64())
         assert ANSWER_TYPES["choice"].field("probabilities").type == pa.map_(pa.string(), pa.float64())
 
 
 class TestStateType:
+    """Which state column types are accepted, decided at bind."""
+
     @pytest.mark.parametrize(
         "kind",
         [
@@ -133,20 +152,25 @@ class TestStateType:
         ],
     )
     def test_accepted(self, kind: pa.DataType) -> None:
+        """Every shape TypeSafe can represent as a state."""
         check_state_type(kind, parse_json=False)
 
     @pytest.mark.parametrize("kind", [pa.int64(), pa.float64(), pa.bool_(), pa.date32(), pa.binary()])
     def test_a_bare_scalar_is_rejected_with_a_way_out(self, kind: pa.DataType) -> None:
+        """Rejecting is only helpful if the message says what to do instead."""
         with pytest.raises(ValueError, match=r"must be VARCHAR, STRUCT, LIST or MAP.*wrap it in a struct"):
             check_state_type(kind, parse_json=False)
 
     def test_parse_json_needs_text(self) -> None:
+        """Parsing a struct as JSON is a contradiction worth catching at bind."""
         check_state_type(pa.string(), parse_json=True)
         with pytest.raises(ValueError, match="parse_json => true needs a VARCHAR or JSON state"):
             check_state_type(pa.struct([("a", pa.int64())]), parse_json=True)
 
 
 class TestToJson:
+    """Arrow value -> JSON, the step that decides what the model actually sees."""
+
     def test_a_map_becomes_an_object_and_a_list_of_pairs_stays_a_list(self) -> None:
         """Identical once in Python — which is why conversion is driven by the Arrow type."""
         pairs = [("a", "x"), ("b", "y")]
@@ -155,10 +179,12 @@ class TestToJson:
         assert to_json([{"k": "a", "v": "x"}], as_list) == [{"k": "a", "v": "x"}]
 
     def test_an_empty_map_is_an_object_not_an_array(self) -> None:
+        """Empty containers are where a value-driven conversion silently picks the wrong JSON type."""
         assert to_json([], pa.map_(pa.string(), pa.string())) == {}
         assert to_json([], pa.list_(pa.string())) == []
 
     def test_nested(self) -> None:
+        """Containers inside containers are where a hand-rolled converter usually breaks."""
         kind = pa.struct(
             [
                 ("tags", pa.list_(pa.string())),
@@ -183,26 +209,31 @@ class TestToJson:
         ],
     )
     def test_scalars_become_json_values(self, value: Any, expected: Any) -> None:
+        """TypeSafe takes text only, so dates and decimals need a representation."""
         assert to_json({"v": value}, pa.struct([("v", pa.null())])) == {"v": expected}
 
     def test_a_blob_is_refused_rather_than_mangled(self) -> None:
+        """Binary has no text form; a mangled one would be judged as though it meant something."""
         with pytest.raises(ValueError, match="BLOB"):
             to_json({"v": b"\x00"}, pa.struct([("v", pa.binary())]))
 
 
 class TestStatesOf:
+    """Turning an input column into one request state per row."""
+
     def test_text_is_sent_verbatim(self) -> None:
+        """Without parse_json, a JSON-looking string is still just a string."""
         column = pa.array(['{"a": 1}', None, "plain"])
         assert states_of(column, parse_json=False) == ['{"a": 1}', None, "plain"]
 
     def test_parse_json_sends_it_structured(self) -> None:
+        """The opt-in path for a DuckDB JSON column."""
         column = pa.array(['{"a": 1}', None, '["x"]', '"just text"'])
         assert states_of(column, parse_json=True) == [{"a": 1}, None, ["x"], "just text"]
 
-    @pytest.mark.parametrize(
-        ("text", "fragment"), [("{oops", "not valid JSON"), ("42", "must be an object, array")]
-    )
+    @pytest.mark.parametrize(("text", "fragment"), [("{oops", "not valid JSON"), ("42", "must be an object, array")])
     def test_parse_json_failures_raise(self, text: str, fragment: str) -> None:
+        """Falling back to the raw text would change the answer silently."""
         with pytest.raises(ValueError, match=fragment):
             states_of(pa.array([text]), parse_json=True)
 
@@ -224,10 +255,9 @@ class TestStatesOf:
         assert states[1:] == [None, None, None, None]
 
     def test_falsy_values_are_still_content(self) -> None:
+        """0, false and empty string are data; only absence means there is nothing to judge."""
         kind = pa.struct([("n", pa.int64()), ("flag", pa.bool_()), ("s", pa.string())])
-        column = pa.array(
-            [{"n": 0, "flag": None, "s": None}, {"n": None, "flag": False, "s": None}], type=kind
-        )
+        column = pa.array([{"n": 0, "flag": None, "s": None}, {"n": None, "flag": False, "s": None}], type=kind)
         assert states_of(column, parse_json=False) == [
             {"n": 0, "flag": None, "s": None},
             {"n": None, "flag": False, "s": None},

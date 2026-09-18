@@ -121,8 +121,7 @@ _EXECUTABLE_EXAMPLES = json.dumps(
             "expected_result": [
                 {
                     "column_name": "dept",
-                    "column_type": "STRUCT(choice VARCHAR, confidence DOUBLE, "
-                    "probabilities MAP(VARCHAR, DOUBLE))",
+                    "column_type": "STRUCT(choice VARCHAR, confidence DOUBLE, probabilities MAP(VARCHAR, DOUBLE))",
                     "null": "YES",
                     "key": None,
                     "default": None,

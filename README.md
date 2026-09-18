@@ -161,6 +161,13 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy vgi_typesafe/     # strict
 ```
 
+Ruff, mypy and pydoclint settings are mirrored from
+[vgi-python](https://github.com/Query-farm/vgi-python) so the fleet lints identically: 120-column
+lines, Google-style docstrings enforced on tests as well as the package, and mypy `strict`.
+pydoclint runs inside the suite (`tests/test_docstrings.py`) rather than as a separate gate — it
+cannot be a project dependency, because it pulls `docstring-parser-fork`, which clobbers
+`vgi-rpc`'s `docstring-parser` in the shared `docstring_parser` import namespace.
+
 `pyproject.toml` deliberately carries **no `[tool.uv.sources]`**. A local path pin
 (`vgi-python = { path = "../vgi-python" }`) makes the project installable only on a machine that
 has that sibling checkout — CI, and everyone else, cannot sync it. To develop against a local

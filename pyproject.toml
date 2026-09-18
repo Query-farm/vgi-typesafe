@@ -65,20 +65,41 @@ packages = ["vgi_typesafe"]
 # explicit `uv pip install -e ../vgi-python`, rather than committing the pin.
 
 [tool.ruff]
-line-length = 110
+# Settings mirrored from vgi-python so the fleet lints identically.
+line-length = 120
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "C4", "D"]
+# vgi-python's set, plus C4 (comprehensions) which this tree already passes.
+select = ["E", "F", "I", "UP", "B", "SIM", "D", "C4"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[tool.ruff.lint.per-file-ignores]
-"tests/*" = ["D"]
-
 [tool.ruff.format]
 quote-style = "double"
+# ruff >=0.16 formats Python code blocks embedded in Markdown, and rewrites
+# constructs our README relies on. Keep Markdown out.
+exclude = ["*.md"]
+
+[tool.pydoclint]
+# Docstring consistency gate (complements ruff's `D` rules, which only check
+# docstring *shape*, not whether documented args/attributes match the code).
+# pydoclint is NOT a project dependency: it pulls docstring-parser-fork, which
+# clobbers vgi-rpc's docstring-parser in the shared `docstring_parser` import
+# namespace. tests/test_docstrings.py runs it isolated via uvx.
+style = "google"
+# Types live in signatures, not docstrings (Google style).
+arg_type_hints_in_docstring = false
+check_return_types = false
+check_yield_types = false
+# Validate that an `Attributes:` section matches the actual dataclass fields.
+check_class_attributes = true
+# Raises (DOC5xx) are not gated: exceptions are documented in prose and raised
+# indirectly, neither of which pydoclint can see.
+skip_checking_raises = true
+# Constructor params are documented on the class, not __init__ (suppresses DOC301).
+allow_init_docstring = true
 
 [tool.mypy]
 python_version = "3.13"

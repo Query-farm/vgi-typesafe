@@ -47,6 +47,7 @@ TICKET = pa.struct([("message", pa.string()), ("tier", pa.string())])
 
 @pytest.fixture
 def mock() -> Iterator[MockTypeSafeServer]:
+    """A mock TypeSafe endpoint on a free port, requiring a known key."""
     with running(api_key="test-key") as server:
         yield server
 
@@ -77,7 +78,10 @@ def _call(
 
 
 class TestAnswers:
+    """The shape and content of what comes back for a well-formed call."""
+
     def test_one_typed_struct_per_question_then_usage(self, mock: MockTypeSafeServer) -> None:
+        """Built at bind, so it is what a caller can rely on before any row is sent."""
         result = _call(mock, pa.array(["My package is lost, this is unacceptable"]))
         assert result.schema.names == ["dept", "angry", "severity", "usage"]
         assert result.schema.types == [
@@ -88,6 +92,7 @@ class TestAnswers:
         ]
 
     def test_every_question_is_answered_from_a_single_request(self, mock: MockTypeSafeServer) -> None:
+        """The whole point of `ask()`: N questions cost one request, not N."""
         (row,) = _call(mock, pa.array(["My package is lost, this is unacceptable"])).to_pylist()
         assert len(mock.requests) == 1
         assert row["dept"]["choice"] == "shipping"
@@ -102,32 +107,40 @@ class TestAnswers:
         }
 
     def test_rows_stay_paired_with_their_own_answers(self, mock: MockTypeSafeServer) -> None:
+        """De-duplication and concurrency reorder work internally; output must still line up."""
         states = pa.array(["lost package", "invoice charges are wrong", "my delivery is delayed"])
         result = _call(mock, states)
         assert [d["choice"] for d in result.column("dept").to_pylist()] == ["shipping", "billing", "shipping"]
 
     def test_the_questions_reach_the_api_verbatim(self, mock: MockTypeSafeServer) -> None:
+        """Anything this layer silently rewrites would change the model's answer without the caller ever seeing why."""
         _call(mock, pa.array(["hello"]), model="jev-1.13")
         (request,) = mock.requests
         assert request == {"state": "hello", "model": "jev-1.13", "questions": QUESTIONS}
 
 
 class TestState:
+    """How each input type reaches the API as a request `state`."""
+
     def test_a_struct_is_sent_as_a_json_object(self, mock: MockTypeSafeServer) -> None:
+        """TypeSafe recommends an object state: the field names tell the model how the parts relate."""
         states = pa.array([{"message": "lost package", "tier": "gold"}], type=TICKET)
         _call(mock, states)
         assert mock.requests[0]["state"] == {"message": "lost package", "tier": "gold"}
 
     def test_a_list_is_sent_as_a_json_array(self, mock: MockTypeSafeServer) -> None:
+        """An array state is how TypeSafe represents a conversation."""
         _call(mock, pa.array([["Hi", "My card was charged twice"]], type=pa.list_(pa.string())))
         assert mock.requests[0]["state"] == ["Hi", "My card was charged twice"]
 
     def test_nested_maps_become_objects(self, mock: MockTypeSafeServer) -> None:
+        """A MAP and a list of pairs look identical in Python, so conversion follows the Arrow type."""
         kind = pa.struct([("message", pa.string()), ("attrs", pa.map_(pa.string(), pa.string()))])
         _call(mock, pa.array([{"message": "hi", "attrs": [("plan", "pro")]}], type=kind))
         assert mock.requests[0]["state"] == {"message": "hi", "attrs": {"plan": "pro"}}
 
     def test_text_is_a_string_unless_parse_json_is_set(self, mock: MockTypeSafeServer) -> None:
+        """A DuckDB JSON column arrives as plain text, so sending it structured has to be opt-in."""
         text = json.dumps({"message": "lost package"})
         _call(mock, pa.array([text]))
         _call(mock, pa.array([text]), parse_json=True)
@@ -145,29 +158,37 @@ class TestState:
         assert len(mock.requests) == 1
 
     def test_an_all_null_batch_needs_no_key(self, mock: MockTypeSafeServer) -> None:
+        """Nothing is asked, so nothing should require credentials — this must not fail the query."""
         result = _call(mock, pa.array([None, None], type=TICKET), api_key=None)
         assert result.column("dept").to_pylist() == [None, None]
         assert mock.requests == []
 
     def test_identical_structured_states_are_billed_once(self, mock: MockTypeSafeServer) -> None:
+        """A LATERAL over a low-cardinality column repeats states; each distinct one is paid for once."""
         ticket = {"message": "lost package", "tier": "gold"}
         result = _call(mock, pa.array([ticket] * 6, type=TICKET))
         assert result.num_rows == 6 and len(mock.requests) == 1
 
 
 class TestQuestionForms:
+    """The argument forms a caller may write `questions` in."""
+
     def test_a_json_string(self, mock: MockTypeSafeServer) -> None:
+        """A caller may prefer JSON text over a struct literal; both must bind the same."""
         result = _call(mock, pa.array(["lost package"]), questions=pa.scalar(json.dumps(QUESTIONS)))
         assert result.schema.names == ["dept", "angry", "severity", "usage"]
         assert mock.requests[0]["questions"] == QUESTIONS
 
     def test_a_single_question(self, mock: MockTypeSafeServer) -> None:
+        """The degenerate case still produces one answer column plus usage."""
         only = {"spam": {"type": "noul", "instructions": "Is this spam?"}}
         result = _call(mock, pa.array(["buy now"]), questions=pa.scalar(only))
         assert result.schema.names == ["spam", "usage"]
 
 
 class TestErrorsSurface:
+    """Failures must reach the user as errors, never as quiet NULLs."""
+
     @pytest.mark.parametrize(
         ("questions", "fragment"),
         [
@@ -179,19 +200,23 @@ class TestErrorsSurface:
     def test_bad_questions_fail_at_bind_before_any_request(
         self, mock: MockTypeSafeServer, questions: dict, fragment: str
     ) -> None:
+        """Validation at bind is what keeps a typo from being billed once per row."""
         with pytest.raises(ClientError, match=fragment):
             _call(mock, pa.array(["hello"]), questions=pa.scalar(questions))
         assert mock.requests == []
 
     def test_an_unsupported_state_type_fails_at_bind(self, mock: MockTypeSafeServer) -> None:
+        """Better a plan-time error naming the accepted types than a per-row failure deep in a scan."""
         with pytest.raises(ClientError, match="state must be VARCHAR, STRUCT, LIST or MAP"):
             _call(mock, pa.array([1, 2, 3]))
         assert mock.requests == []
 
     def test_invalid_json_with_parse_json_is_an_error_not_a_null(self, mock: MockTypeSafeServer) -> None:
+        """The caller asked for JSON; silently sending the raw text instead would change the answer."""
         with pytest.raises(ClientError, match="not valid JSON"):
             _call(mock, pa.array(["{oops"]), parse_json=True)
 
     def test_a_rejected_key_is_an_error_not_a_null(self, mock: MockTypeSafeServer) -> None:
+        """A NULL here is indistinguishable from a NULL input, so the query would look like it worked."""
         with pytest.raises(ClientError, match="rejected the API key"):
             _call(mock, pa.array(["hello"]), api_key="wrong-key")

@@ -133,8 +133,7 @@ def answer_score(state: Any, question: dict[str, Any]) -> dict[str, Any]:
         "score": round(sum(index * p for index, p in enumerate(values)), 6),
         "confidence": confidence,
         "legend": {
-            str(i): level if isinstance(level, str) else _flatten(level.get("what"))
-            for i, level in enumerate(levels)
+            str(i): level if isinstance(level, str) else _flatten(level.get("what")) for i, level in enumerate(levels)
         },
         "probabilities": {str(i): p for i, p in enumerate(values)},
     }
@@ -161,8 +160,7 @@ def _validate_criteria(qid: str, kind: str, criteria: Any) -> None:
     elif kind == "score":
         if not isinstance(criteria, list) or not MIN_SCORE_LEVELS <= len(criteria) <= MAX_SCORE_LEVELS:
             raise RequestInvalid(
-                f"question {qid!r}: 'criteria' must be an ordered array of "
-                f"{MIN_SCORE_LEVELS}-{MAX_SCORE_LEVELS} levels"
+                f"question {qid!r}: 'criteria' must be an ordered array of {MIN_SCORE_LEVELS}-{MAX_SCORE_LEVELS} levels"
             )
         if not all(isinstance(level, (str, dict)) for level in criteria):
             raise RequestInvalid(f"question {qid!r}: each level must be a string or an object")
@@ -186,9 +184,7 @@ def _validate(body: Any) -> tuple[Any, str, dict[str, dict[str, Any]]]:
             raise RequestInvalid(f"question {qid!r} must be an object")
         kind = question.get("type")
         if kind not in _ANSWERERS:
-            raise RequestInvalid(
-                f"question {qid!r}: 'type' must be one of {', '.join(_ANSWERERS)}, got {kind!r}"
-            )
+            raise RequestInvalid(f"question {qid!r}: 'type' must be one of {', '.join(_ANSWERERS)}, got {kind!r}")
         if not isinstance(question.get("instructions"), str) or not question["instructions"].strip():
             raise RequestInvalid(f"question {qid!r}: 'instructions' is required")
         _validate_criteria(qid, kind, question.get("criteria"))
@@ -302,9 +298,7 @@ def running(api_key: str | None = None, port: int = 0) -> Iterator[MockTypeSafeS
 
 def main() -> None:
     """Run the mock endpoint in the foreground."""
-    parser = argparse.ArgumentParser(
-        description="Mock TypeSafe /v1/systemone endpoint (choice, noul and score)"
-    )
+    parser = argparse.ArgumentParser(description="Mock TypeSafe /v1/systemone endpoint (choice, noul and score)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--api-key", default=None, help="require this exact key (default: accept any)")

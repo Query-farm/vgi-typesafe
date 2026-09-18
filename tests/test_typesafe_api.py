@@ -45,7 +45,10 @@ def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 
 class TestWireFormat:
+    """The request we put on the wire and the answer we parse back."""
+
     def test_request_matches_the_api_reference(self) -> None:
+        """Pinned against the published shape, not against our own helpers."""
         seen: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -66,6 +69,7 @@ class TestWireFormat:
         }
 
     def test_answer_is_parsed(self) -> None:
+        """Every field a caller reads must survive the round trip."""
         (answer,) = _ask(_client(_mock_backend), ["I was charged twice on my invoice"])
         assert answer is not None
         assert answer.choice == "billing"
@@ -74,6 +78,8 @@ class TestWireFormat:
         assert answer.input_tokens and answer.output_tokens == 1
 
     def test_probabilities_follow_the_callers_option_order(self) -> None:
+        """Reported in criteria order so the MAP reads the same on every row."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             answer = {"type": "choice", "choice": "billing", "confidence": 1.0}
             answer["probabilities"] = {"billing": 1.0, "shipping": 0.0}  # reversed on purpose
@@ -84,18 +90,24 @@ class TestWireFormat:
 
 
 class TestBatching:
+    """Per-batch de-duplication, ordering and concurrency."""
+
     def test_results_are_in_input_order(self) -> None:
+        """De-duplication must not reorder the results."""
         states = ["lost package", "invoice charges", "lost package delivery"]
         answers = _ask(_client(_mock_backend), states)
         assert [a.choice for a in answers if a] == ["shipping", "billing", "shipping"]
 
     def test_null_states_make_no_request(self) -> None:
+        """A NULL row should cost nothing."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             raise AssertionError("should not have been called")
 
         assert _ask(_client(handler), [None, None]) == [None, None]
 
     def test_nulls_keep_their_position(self) -> None:
+        """Positions must survive, or answers land on the wrong rows."""
         answers = _ask(_client(_mock_backend), [None, "lost package", None])
         assert [a is None for a in answers] == [True, False, True]
 
@@ -113,14 +125,18 @@ class TestBatching:
 
     @pytest.mark.parametrize("concurrency", [1, 4])
     def test_concurrency_does_not_change_the_result(self, concurrency: int) -> None:
+        """Parallelism is an optimisation, not a behaviour change."""
         states = [f"lost package {i}" if i % 2 else f"invoice {i}" for i in range(20)]
         answers = _ask(_client(_mock_backend), states, concurrency=concurrency)
         assert [a.choice for a in answers if a] == ["shipping" if i % 2 else "billing" for i in range(20)]
 
 
 class TestRetries:
+    """What is retried, how often, and what is not."""
+
     @pytest.mark.parametrize("status", [429, 529])
     def test_rate_limit_and_overload_are_retried(self, status: int, _no_sleep: list[float]) -> None:
+        """The two statuses the API documents as transient."""
         attempts: list[int] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -133,6 +149,7 @@ class TestRetries:
         assert _no_sleep == [0.5, 1.0], "exponential backoff"
 
     def test_retry_after_is_honoured(self, _no_sleep: list[float]) -> None:
+        """Ignoring the server's own backoff is how you get rate-limited harder."""
         attempts: list[int] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -145,6 +162,7 @@ class TestRetries:
         assert _no_sleep == [3.0]
 
     def test_retries_are_bounded(self) -> None:
+        """An unbounded retry turns a rate limit into a hang."""
         attempts: list[int] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -158,6 +176,7 @@ class TestRetries:
 
     @pytest.mark.parametrize("status", [400, 401, 422, 500])
     def test_other_errors_are_not_retried(self, status: int) -> None:
+        """Retrying a 401 or a 422 just spends money to fail again."""
         attempts: list[int] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -170,7 +189,11 @@ class TestRetries:
 
 
 class TestErrors:
+    """Every failure must raise rather than degrade to NULL."""
+
     def test_a_401_names_the_key_but_never_prints_it(self) -> None:
+        """Error text reaches logs; the key must not."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(401, json={"detail": "invalid or missing API key"})
 
@@ -179,6 +202,8 @@ class TestErrors:
         assert "secret-key" not in str(excinfo.value)
 
     def test_a_connection_failure_is_wrapped(self) -> None:
+        """A bare httpx error does not tell a SQL user which endpoint failed."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("refused")
 
@@ -195,6 +220,7 @@ class TestErrors:
         ],
     )
     def test_a_malformed_success_raises_rather_than_becoming_null(self, response: httpx.Response) -> None:
+        """A 200 with the wrong body is still a failure, and must not look like a NULL input."""
         with pytest.raises(api.TypeSafeError):
             _ask(_client(lambda request: response), ["x"])
 
@@ -215,7 +241,10 @@ def _ask_many(client: httpx.Client, states: list[Any], **kwargs: Any) -> list[ap
 
 
 class TestAskMany:
+    """The general path: several questions, arbitrary states."""
+
     def test_all_questions_travel_in_one_request(self) -> None:
+        """One request per state regardless of how many questions."""
         seen: list[dict[str, Any]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -229,6 +258,7 @@ class TestAskMany:
         assert payload["questions"] == QUESTIONS
 
     def test_each_answer_is_shaped_by_its_question_type(self) -> None:
+        """The parser must key off the question, not guess."""
         (response,) = _ask_many(_client(_mock_backend), ["furious about this outage and lost package"])
         assert response is not None
         assert set(response.answers["dept"]) == {"choice", "confidence", "probabilities"}
@@ -251,6 +281,7 @@ class TestAskMany:
         assert list(response.answers["severity"]["probabilities"]) == [0, 1, 2]
 
     def test_structured_states_are_deduplicated_regardless_of_key_order(self) -> None:
+        """Two structs differing only in key order are the same state and must be billed once."""
         calls: list[Any] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -263,6 +294,7 @@ class TestAskMany:
         assert responses[0] is responses[1] and responses[3] is None
 
     def test_a_string_and_the_same_text_as_an_object_are_different_states(self) -> None:
+        """Collapsing these would send one and answer the other."""
         calls: list[Any] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -284,6 +316,8 @@ class TestAskMany:
         ],
     )
     def test_a_malformed_answer_raises_and_names_the_question(self, mutate, fragment: str) -> None:
+        """With several questions in flight, a message that does not name one is unusable."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             body = handle(json.loads(request.content))
             mutate(body["answers"])
@@ -293,5 +327,6 @@ class TestAskMany:
             _ask_many(_client(handler), ["x"])
 
     def test_a_response_without_answers_raises(self) -> None:
+        """A response we cannot read is an error, not an empty result."""
         with pytest.raises(api.TypeSafeError, match="no 'answers'"):
             _ask_many(_client(lambda request: httpx.Response(200, json={"model": "m"})), ["x"])

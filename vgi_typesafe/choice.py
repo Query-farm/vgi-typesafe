@@ -103,9 +103,7 @@ class ChoiceArgs:
             default=None,
         ),
     ] = None
-    model: Annotated[str, Arg("model", doc="TypeSafe model id", default=api.DEFAULT_MODEL)] = (
-        api.DEFAULT_MODEL
-    )
+    model: Annotated[str, Arg("model", doc="TypeSafe model id", default=api.DEFAULT_MODEL)] = api.DEFAULT_MODEL
     concurrency: Annotated[
         int,
         Arg("concurrency", doc="Max in-flight API requests per input batch", default=8, ge=1, le=64),
@@ -117,6 +115,13 @@ def criteria_of(raw: Any) -> dict[str, str]:
 
     An Arrow map scalar converts to a list of ``(key, value)`` pairs; a dict is
     accepted too so the function can be driven directly from Python.
+
+    Args:
+        raw: The ``criteria`` argument as DuckDB delivered it.
+
+    Returns:
+        Each option paired with its description, in the order given — which is
+        the order probabilities are reported in.
 
     Raises:
         ValueError: The map is missing, empty, too large, or has a blank option.
@@ -201,9 +206,7 @@ class ChoiceFunction(RowTransformFunction[ChoiceArgs]):
     def on_bind(cls, params: BindParams[ChoiceArgs]) -> BindResponse:
         """Reject an incomplete question at plan time, before any row is billed."""
         if not params.args.instructions.strip():
-            raise ValueError(
-                "choice() requires 'instructions', e.g. instructions => 'Which team should handle this?'"
-            )
+            raise ValueError("choice() requires 'instructions', e.g. instructions => 'Which team should handle this?'")
         criteria_of(params.args.criteria)
         return BindResponse(output_schema=cls.FIXED_SCHEMA)
 

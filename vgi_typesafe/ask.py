@@ -116,9 +116,7 @@ _LITERAL_EXAMPLE = (
 class AskArgs:
     """``ask(state, questions => ...)``."""
 
-    state: Annotated[
-        AnyArrow, Arg(0, doc="The content to evaluate — a piece of text, a row, or a structured value")
-    ]
+    state: Annotated[AnyArrow, Arg(0, doc="The content to evaluate — a piece of text, a row, or a structured value")]
     questions: Annotated[
         AnyArrow,
         Arg(
@@ -131,9 +129,7 @@ class AskArgs:
             ),
         ),
     ]
-    model: Annotated[str, Arg("model", doc="TypeSafe model id", default=api.DEFAULT_MODEL)] = (
-        api.DEFAULT_MODEL
-    )
+    model: Annotated[str, Arg("model", doc="TypeSafe model id", default=api.DEFAULT_MODEL)] = api.DEFAULT_MODEL
     concurrency: Annotated[
         int,
         Arg("concurrency", doc="Max in-flight API requests per input batch", default=8, ge=1, le=64),
@@ -178,8 +174,7 @@ def _question(name: str, raw: Any) -> dict[str, Any]:
     kind = str(raw.get("type") or "").strip().lower()
     if kind not in api.QUESTION_TYPES:
         raise ValueError(
-            f"ask(): question {name!r} has type {raw.get('type')!r}; "
-            f"expected one of {', '.join(api.QUESTION_TYPES)}"
+            f"ask(): question {name!r} has type {raw.get('type')!r}; expected one of {', '.join(api.QUESTION_TYPES)}"
         )
     instructions = raw.get("instructions")
     if not isinstance(instructions, str) or not instructions.strip():
@@ -190,8 +185,7 @@ def _question(name: str, raw: Any) -> dict[str, Any]:
     if kind == "choice":
         if not isinstance(criteria, dict) or not criteria:
             raise ValueError(
-                f"ask(): choice question {name!r} requires 'criteria': a struct or MAP of "
-                "option -> description"
+                f"ask(): choice question {name!r} requires 'criteria': a struct or MAP of option -> description"
             )
         if len(criteria) > api.MAX_OPTIONS:
             raise ValueError(f"ask(): choice question {name!r} has more than {api.MAX_OPTIONS} options")
@@ -219,6 +213,15 @@ def _question(name: str, raw: Any) -> dict[str, Any]:
 def questions_of(raw: Any) -> dict[str, dict[str, Any]]:
     """Normalise and validate the ``questions`` argument.
 
+    Args:
+        raw: The argument as DuckDB delivered it — a struct literal, a MAP's
+            ``(key, value)`` pairs, a JSON string, or an ANY-typed wrapper
+            around any of those.
+
+    Returns:
+        Each question keyed by name, in the order given, with its type
+        lowercased and its criteria in the shape the API expects.
+
     Raises:
         ValueError: With a message naming the question at fault.
     """
@@ -243,9 +246,7 @@ def questions_of(raw: Any) -> dict[str, dict[str, Any]]:
         # Question names become column names, which DuckDB compares case-insensitively.
         folded = name.lower()
         if folded == USAGE_COLUMN:
-            raise ValueError(
-                f"ask(): a question may not be named {USAGE_COLUMN!r}; that column reports token usage"
-            )
+            raise ValueError(f"ask(): a question may not be named {USAGE_COLUMN!r}; that column reports token usage")
         if folded in seen:
             raise ValueError(f"ask(): question name {name!r} is repeated (names are case-insensitive)")
         seen.add(folded)
@@ -256,8 +257,7 @@ def questions_of(raw: Any) -> dict[str, dict[str, Any]]:
 def output_schema_of(questions: Mapping[str, Mapping[str, Any]]) -> pa.Schema:
     """One answer STRUCT per question — commented with what it asks — plus usage."""
     fields = [
-        field(name, ANSWER_TYPES[q["type"]], f"{q['type']}: {q['instructions']}")
-        for name, q in questions.items()
+        field(name, ANSWER_TYPES[q["type"]], f"{q['type']}: {q['instructions']}") for name, q in questions.items()
     ]
     fields.append(field(USAGE_COLUMN, USAGE_TYPE, "Model and billed tokens for this row's request."))
     return pa.schema(fields)
@@ -269,12 +269,7 @@ def output_schema_of(questions: Mapping[str, Mapping[str, Any]]) -> pa.Schema:
 
 
 def _is_structured(kind: pa.DataType) -> bool:
-    return (
-        pa.types.is_struct(kind)
-        or pa.types.is_list(kind)
-        or pa.types.is_large_list(kind)
-        or pa.types.is_map(kind)
-    )
+    return pa.types.is_struct(kind) or pa.types.is_list(kind) or pa.types.is_large_list(kind) or pa.types.is_map(kind)
 
 
 def _is_text(kind: pa.DataType) -> bool:
@@ -302,9 +297,7 @@ def _scalar_to_json(value: Any) -> Any:
     if isinstance(value, (dt.datetime, dt.date, dt.time)):
         return value.isoformat()
     if isinstance(value, (bytes, bytearray)):
-        raise ValueError(
-            "ask(): state contains a BLOB; TypeSafe accepts text only — drop or encode that field"
-        )
+        raise ValueError("ask(): state contains a BLOB; TypeSafe accepts text only — drop or encode that field")
     return str(value)
 
 
@@ -329,13 +322,10 @@ def _parse_json_state(text: str) -> Any:
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"ask(): parse_json => true, but a state is not valid JSON ({exc}): {text[:80]!r}"
-        ) from exc
+        raise ValueError(f"ask(): parse_json => true, but a state is not valid JSON ({exc}): {text[:80]!r}") from exc
     if not isinstance(parsed, (dict, list, str)):
         raise ValueError(
-            "ask(): a JSON state must be an object, array or string, "
-            f"not {type(parsed).__name__}: {text[:80]!r}"
+            f"ask(): a JSON state must be an object, array or string, not {type(parsed).__name__}: {text[:80]!r}"
         )
     return parsed
 
@@ -468,9 +458,7 @@ class AskFunction(RowTransformFunction[AskArgs]):
             },
         )
         examples = [
-            FunctionExample(
-                sql=_ROW_EXAMPLE, description="Route, flag and grade every row of a table in one pass"
-            ),
+            FunctionExample(sql=_ROW_EXAMPLE, description="Route, flag and grade every row of a table in one pass"),
             FunctionExample(sql=_LITERAL_EXAMPLE, description="Ask several questions about a single literal"),
         ]
 
@@ -523,9 +511,7 @@ class AskFunction(RowTransformFunction[AskArgs]):
         columns.append(
             pa.array(
                 [
-                    {"model": r.model, "input_tokens": r.input_tokens, "output_tokens": r.output_tokens}
-                    if r
-                    else None
+                    {"model": r.model, "input_tokens": r.input_tokens, "output_tokens": r.output_tokens} if r else None
                     for r in responses
                 ],
                 type=USAGE_TYPE,

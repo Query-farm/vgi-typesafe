@@ -32,6 +32,7 @@ CRITERIA_TYPE = pa.map_(pa.string(), pa.string())
 
 @pytest.fixture
 def mock() -> Iterator[MockTypeSafeServer]:
+    """A mock TypeSafe endpoint on a free port, requiring a known key."""
     with running(api_key="test-key") as server:
         yield server
 
@@ -69,13 +70,17 @@ def _call(
 
 
 class TestChoice:
+    """The 1->1 contract and the columns a caller reads."""
+
     def test_one_output_row_per_input_row_in_order(self, mock: MockTypeSafeServer) -> None:
+        """Row counts must match exactly, or a LATERAL pairs answers with the wrong input rows."""
         result = _call(mock, ["My package never arrived", "I was charged twice", "Where is my delivery?"])
         assert result.column("choice").to_pylist() == ["shipping", "billing", "shipping"]
         assert result.schema.names == CHOICE_SCHEMA.names
         assert result.schema.types == CHOICE_SCHEMA.types
 
     def test_every_column_is_populated(self, mock: MockTypeSafeServer) -> None:
+        """A column that is always NULL is a column nobody can use."""
         (row,) = _call(mock, ["I was charged twice"]).to_pylist()
         assert row["choice"] == "billing"
         assert 0.0 < row["confidence"] <= 1.0
@@ -92,11 +97,13 @@ class TestChoice:
         assert len(mock.requests) == 1
 
     def test_an_all_null_batch_needs_no_key(self, mock: MockTypeSafeServer) -> None:
+        """Nothing is asked, so nothing should require credentials — this must not fail the query."""
         result = _call(mock, [None, None], api_key=None)
         assert result.column("choice").to_pylist() == [None, None]
         assert mock.requests == []
 
     def test_the_question_reaches_the_api_verbatim(self, mock: MockTypeSafeServer) -> None:
+        """A silent rewrite here would change the model's answer with no visible cause."""
         _call(mock, ["hello"], arguments=_arguments(model=pa.scalar("jev-1.13")))
         (request,) = mock.requests
         assert request == {
@@ -112,54 +119,69 @@ class TestChoice:
         }
 
     def test_repeated_states_are_billed_once(self, mock: MockTypeSafeServer) -> None:
+        """A LATERAL over a low-cardinality column repeats states; each distinct one is paid for once."""
         result = _call(mock, ["lost package"] * 5 + ["invoice"] * 5)
         assert result.num_rows == 10
         assert len(mock.requests) == 2
 
 
 class TestErrorsSurface:
+    """Failures must reach the user as errors, never as quiet NULLs."""
+
     def test_a_rejected_key_is_an_error_not_a_null(self, mock: MockTypeSafeServer) -> None:
+        """A NULL here is indistinguishable from a NULL input, so the query would look like it worked."""
         with pytest.raises(ClientError, match="rejected the API key"):
             _call(mock, ["hello"], api_key="wrong-key")
 
     def test_a_missing_key_says_how_to_fix_it(self, mock: MockTypeSafeServer, monkeypatch) -> None:
+        """The API's bare 401 does not tell a SQL user to run CREATE SECRET; this message must."""
         monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
         with pytest.raises(ClientError, match="CREATE SECRET"):
             _call(mock, ["hello"], api_key=None)
 
     def test_missing_instructions_fail_at_bind(self, mock: MockTypeSafeServer) -> None:
+        """Caught at plan time, before a single row is billed."""
         with pytest.raises(ClientError, match="requires 'instructions'"):
             _call(mock, ["hello"], arguments=_arguments(instructions=None))
         assert mock.requests == []
 
     def test_missing_criteria_fail_at_bind(self, mock: MockTypeSafeServer) -> None:
+        """Caught at plan time, before a single row is billed."""
         with pytest.raises(ClientError, match="requires 'criteria'"):
             _call(mock, ["hello"], arguments=_arguments(criteria=None))
         assert mock.requests == []
 
 
 class TestCriteriaOf:
+    """Normalising the `criteria` argument, which DuckDB may deliver several ways."""
+
     def test_accepts_map_pairs_and_dicts(self) -> None:
+        """An Arrow MAP scalar converts to pairs; a dict is what Python callers pass. Both are valid."""
         assert criteria_of([("a", "x"), ("b", "y")]) == {"a": "x", "b": "y"}
         assert criteria_of([{"key": "a", "value": "x"}]) == {"a": "x"}
         assert criteria_of({"a": "x"}) == {"a": "x"}
 
     def test_preserves_option_order(self) -> None:
+        """Option order is the order probabilities are reported in, so the MAP reads the same on every row."""
         assert list(criteria_of([("z", ""), ("a", ""), ("m", "")])) == ["z", "a", "m"]
 
     def test_a_null_description_is_an_empty_one(self) -> None:
+        """An option with no description is still a usable option."""
         assert criteria_of([("a", None)]) == {"a": ""}
 
     @pytest.mark.parametrize("raw", [None, [], {}])
     def test_empty_is_rejected(self, raw: Any) -> None:
+        """Asking a choice question with nothing to choose between is a mistake, not a query."""
         with pytest.raises(ValueError, match="requires 'criteria'"):
             criteria_of(raw)
 
     def test_blank_option_is_rejected(self) -> None:
+        """A blank option name would produce an unreadable answer column."""
         with pytest.raises(ValueError, match="blank option"):
             criteria_of([(" ", "x")])
 
     def test_too_many_options_are_rejected(self) -> None:
+        """Caught locally rather than spending a request to be told by the API."""
         with pytest.raises(ValueError, match="at most 255"):
             criteria_of({f"o{i}": "" for i in range(256)})
 

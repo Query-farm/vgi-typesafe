@@ -46,9 +46,7 @@ def _sql_type(kind: pa.DataType) -> str:
 
 def result_columns_schema(schema: pa.Schema) -> str:
     """Render a table function's static result shape as ``vgi.result_columns_schema``."""
-    return json.dumps(
-        [{"name": f.name, "type": _sql_type(f.type), "description": comment_of(f)} for f in schema]
-    )
+    return json.dumps([{"name": f.name, "type": _sql_type(f.type), "description": comment_of(f)} for f in schema])
 
 
 def examples(*pairs: tuple[str, str]) -> str:

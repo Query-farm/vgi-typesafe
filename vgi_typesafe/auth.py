@@ -98,6 +98,12 @@ def _secret_values(secrets: dict[str, dict[str, Any]] | None) -> dict[str, Any] 
 def for_call(secrets: dict[str, dict[str, Any]] | None) -> Credentials:
     """Resolve the credentials for one call: the secret first, then the environment.
 
+    Args:
+        secrets: The resolved-secrets mapping from ``params.secrets``, or None.
+
+    Returns:
+        The API key and the base URL to send it to.
+
     Raises:
         TypeSafeAuthError: No key was found anywhere. Raised rather than sending
             an unauthenticated request, because the API's bare 401 would not
