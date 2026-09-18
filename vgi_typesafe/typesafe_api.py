@@ -119,17 +119,25 @@ def open_client(timeout: float = DEFAULT_TIMEOUT) -> httpx.Client:
     return httpx.Client(timeout=timeout, headers={"User-Agent": f"vgi-typesafe/{__version__}"})
 
 
+#: The API stamps every response with this; it is what support asks for.
+REQUEST_ID_HEADER = "x-typesafe-request-id"
+
+
 def _error_detail(response: httpx.Response) -> str:
-    """The API's own explanation, if it sent one."""
+    """The API's own explanation, plus the request id, if it sent them."""
     try:
         body = response.json()
     except ValueError:
-        return response.text[:300]
-    if isinstance(body, dict):
-        for key in ("detail", "error", "message"):
-            if body.get(key):
-                return str(body[key])[:300]
-    return str(body)[:300]
+        detail = response.text[:300]
+    else:
+        detail = str(body)[:300]
+        if isinstance(body, dict):
+            for key in ("detail", "error", "message"):
+                if body.get(key):
+                    detail = str(body[key])[:300]
+                    break
+    request_id = response.headers.get(REQUEST_ID_HEADER)
+    return f"{detail} (request id {request_id})" if request_id else detail
 
 
 def _server_delay(response: httpx.Response) -> float | None:

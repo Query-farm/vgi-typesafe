@@ -77,7 +77,7 @@ def test_a_literal_call(mock: MockTypeSafeServer) -> None:
     (row,) = _rows(mock, f"SELECT * FROM typesafe.main.choice('I was charged twice', {QUESTION});")
     assert row["choice"] == "billing"
     assert set(row["probabilities"]) == {"shipping", "billing"}
-    assert row["model"] == "jev-latest"
+    assert row["model"] == "jev-1.13.0"
 
 
 def test_a_correlated_lateral_pairs_each_row_with_its_own_answer(mock: MockTypeSafeServer) -> None:

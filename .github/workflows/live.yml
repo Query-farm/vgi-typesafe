@@ -1,0 +1,36 @@
+name: Live API
+
+# The offline suite asserts the MOCK's behaviour, which makes the mock both the
+# thing under test and the thing defining correct. This lane is the only thing
+# that would notice TypeSafe changing something under us — it already caught the
+# model alias being resolved rather than echoed.
+#
+# Scheduled rather than per-push: every run spends real tokens, and a change on
+# TypeSafe's side does not arrive with our commits.
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  # Never run two of these at once: they share one account's rate limit.
+  group: typesafe-live
+  cancel-in-progress: false
+
+env:
+  UV_NO_SOURCES: "1"
+
+jobs:
+  live:
+    name: Real TypeSafe API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --no-sources --all-extras
+      - name: Live contract tests
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: uv run --no-sources pytest -m live -q

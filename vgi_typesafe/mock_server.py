@@ -191,12 +191,23 @@ def _validate(body: Any) -> tuple[Any, str, dict[str, dict[str, Any]]]:
     return body["state"], model, questions
 
 
+#: What `jev-latest` resolves to here. Production answers with a concrete
+#: version (observed: `jev-1.13.0`) rather than echoing the alias, so the mock
+#: does too — otherwise tests pin a behaviour the real API does not have.
+RESOLVED_MODEL = "jev-1.13.0"
+
+
+def resolve_model(model: str) -> str:
+    """The concrete version an alias resolves to, mirroring production."""
+    return RESOLVED_MODEL if model.endswith("-latest") else model
+
+
 def handle(body: Any) -> dict[str, Any]:
     """Answer one decoded System One request. Raises :class:`RequestInvalid`."""
     state, model, questions = _validate(body)
     answers = {qid: _ANSWERERS[question["type"]](state, question) for qid, question in questions.items()}
     return {
-        "model": model,
+        "model": resolve_model(model),
         "answers": answers,
         "usage": {
             "input_tokens": len(_flatten(body).split()),

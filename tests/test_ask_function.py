@@ -101,7 +101,7 @@ class TestAnswers:
         assert [level for level, _ in row["severity"]["probabilities"]] == [0, 1, 2]
         assert 0.0 <= row["severity"]["score"] <= 2.0
         assert row["usage"] == {
-            "model": "jev-latest",
+            "model": "jev-1.13.0",
             "input_tokens": row["usage"]["input_tokens"],
             "output_tokens": 3,
         }

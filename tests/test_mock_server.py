@@ -13,6 +13,7 @@ import pytest
 
 from vgi_typesafe import mock_server
 from vgi_typesafe.mock_server import (
+    RESOLVED_MODEL,
     RequestInvalid,
     answer_choice,
     answer_noul,
@@ -209,7 +210,7 @@ class TestValidation:
     def test_response_shape(self) -> None:
         """The envelope the client parses."""
         body = handle(_request())
-        assert body["model"] == "jev-latest"
+        assert body["model"] == RESOLVED_MODEL, "an alias resolves to a concrete version, as in production"
         assert body["answers"]["department"]["type"] == "choice"
         assert set(body["usage"]) == {"input_tokens", "output_tokens"}
 

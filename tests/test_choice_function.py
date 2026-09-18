@@ -86,7 +86,7 @@ class TestChoice:
         assert 0.0 < row["confidence"] <= 1.0
         assert [option for option, _ in row["probabilities"]] == ["shipping", "billing"]
         assert sum(p for _, p in row["probabilities"]) == pytest.approx(1.0, abs=1e-5)
-        assert row["model"] == "jev-latest"
+        assert row["model"] == "jev-1.13.0"
         assert row["input_tokens"] > 0 and row["output_tokens"] == 1
 
     def test_a_null_state_is_a_null_row_and_no_request(self, mock: MockTypeSafeServer) -> None:

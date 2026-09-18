@@ -74,7 +74,7 @@ class TestWireFormat:
         assert answer is not None
         assert answer.choice == "billing"
         assert 0.0 < answer.confidence <= 1.0
-        assert answer.model == "jev-latest"
+        assert answer.model == "jev-1.13.0"
         assert answer.input_tokens and answer.output_tokens == 1
 
     def test_probabilities_follow_the_callers_option_order(self) -> None:
@@ -321,7 +321,7 @@ class TestAskMany:
         assert set(response.answers["angry"]) == {"noul"}
         assert set(response.answers["severity"]) == {"score", "confidence", "probabilities"}
         assert response.answers["dept"]["choice"] == "shipping"
-        assert response.model == "jev-latest" and response.output_tokens == 3
+        assert response.model == "jev-1.13.0" and response.output_tokens == 3
 
     def test_score_levels_become_ascending_integers(self) -> None:
         """The API keys levels as strings; SQL wants MAP(INTEGER, DOUBLE), in order."""

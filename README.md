@@ -214,6 +214,28 @@ System One models and are subject to TypeSafe's terms of use.
 | `test_ask_logic.py` | `ask()`'s rules: question validation messages, state → JSON conversion, output shape. |
 | `test_ask_function.py`, `test_choice_function.py` | The worker as a subprocess over the real VGI protocol, against the mock. |
 | `test_end_to_end.py` | Real SQL — `ATTACH`, `CREATE SECRET`, `LATERAL`, whole-row state — against the mock. |
+| `test_live.py` | The only tests that hit the real API. Deselected by default. |
+
+```sh
+TYPESAFE_API_KEY=... uv run pytest -m live
+```
+
+Everything except `test_live.py` asserts the **mock's** behaviour, which makes the mock both the thing
+under test and the thing defining correct. The live lane is what closes that loop, and it has already
+earned it: the mock echoed the requested model (`jev-latest`) where production resolves the alias to a
+concrete version (`jev-1.13.0`), and six offline tests had pinned the echo as if it were the API's
+behaviour. It runs on a schedule rather than per-push — a change on TypeSafe's side does not arrive
+with our commits — and `concurrency: typesafe-live` keeps two runs from sharing one rate limit.
+
+### Where we are stricter than the API
+
+Production is laxer than its own reference in two places. We follow the reference, and `test_live.py`
+records both so the gap stays a decision rather than an oversight:
+
+| | Documented | Production actually | We |
+| --- | --- | --- | --- |
+| `score` levels | 2–10 | accepts 1 (and scores every row `0.0`) | reject at bind |
+| `noul` `instructions` | required | optional if `criteria` is given | require it |
 
 The end-to-end tests drive the `haybarn` shell built from `../vgi` (`../vgi/build/release/haybarn`); set
 `HAYBARN` to use another binary. They skip if none is found. `ask()`'s structured state needs a vgi
