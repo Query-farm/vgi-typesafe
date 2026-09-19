@@ -3,7 +3,7 @@
 """A mocked TypeSafe endpoint: ``POST /v1/systemone`` and ``GET /v1/models``.
 
 It speaks the real wire format — Bearer auth, the ``state``/``model``/``questions``
-request, the ``answers``/``usage`` response, 401 and 422 errors — so the worker
+request, the ``answers``/``usage`` response, 401, 400 and 422 errors — so the worker
 cannot tell it from production. What it does *not* have is a model. Everything
 is keyword overlap between the state and the question's text:
 
@@ -56,6 +56,19 @@ _STOPWORDS = frozenset(
 
 class RequestInvalid(ValueError):
     """The request body fails validation; becomes a 422."""
+
+    status = 422
+
+
+class QuestionTypeUnknown(RequestInvalid):
+    """A question ``type`` that is not choice, noul or score; becomes a 400.
+
+    Production answers this with a bare 400 (observed 2026-09-19), not the 422
+    its reference documents for a malformed question — a score with no criteria
+    is still a 422 — so the mock splits the same way.
+    """
+
+    status = 400
 
 
 def _stem(word: str) -> str:
@@ -187,7 +200,7 @@ def _validate(body: Any) -> tuple[Any, str, dict[str, dict[str, Any]]]:
             raise RequestInvalid(f"question {qid!r} must be an object")
         kind = question.get("type")
         if kind not in _ANSWERERS:
-            raise RequestInvalid(f"question {qid!r}: 'type' must be one of {', '.join(_ANSWERERS)}, got {kind!r}")
+            raise QuestionTypeUnknown(f"question {qid!r}: 'type' must be one of {', '.join(_ANSWERERS)}, got {kind!r}")
         if not isinstance(question.get("instructions"), str) or not question["instructions"].strip():
             raise RequestInvalid(f"question {qid!r}: 'instructions' is required")
         _validate_criteria(qid, kind, question.get("criteria"))
@@ -324,7 +337,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(422, {"detail": "request body is not valid JSON"})
             return
         except RequestInvalid as exc:
-            self._send(422, {"detail": str(exc)})
+            self._send(exc.status, {"detail": str(exc)})
             return
         self.server.record(body)
         self._send(200, result)

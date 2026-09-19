@@ -89,7 +89,7 @@ vgi_typesafe/
 ## Testing
 
 ```sh
-uv run pytest -q                              # 472 offline; no key, no network
+uv run pytest -q                              # 473 offline; no key, no network
 TYPESAFE_API_KEY=... uv run pytest -m live    # 26 live; real API, real tokens
 ```
 
@@ -171,3 +171,10 @@ reference and record both in `test_live.py`, so the gap stays a decision:
 a `score` question with ONE level is accepted upstream (docs say 2–10) and scores
 every row `0.0`; a `noul` question with criteria and no `instructions` is accepted
 (the reference says every type requires them).
+
+It also departs from the reference's status codes: an unknown question `type` is a
+bare 400 ("Invalid request.", since 2026-09-19), not the documented 422, while a
+malformed question of a known type is still a 422. The mock splits the same way.
+Nothing depends on the difference — neither is retried, and bind rejects an unknown
+type before a request exists — but the nightly live lane pins it, so a change
+there turns it red.

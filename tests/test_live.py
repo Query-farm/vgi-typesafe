@@ -303,12 +303,17 @@ class TestErrorsAreWhatWeClaim:
     def test_an_unknown_question_type_is_rejected_upstream(
         self, credentials: Credentials, client: api.httpx.Client
     ) -> None:
-        """We reject these at bind; this confirms we are not inventing a restriction."""
+        """We reject these at bind; this confirms we are not inventing a restriction.
+
+        A 400, not the 422 the reference documents for a malformed question (it
+        was a 422 as late as 2026-09-18). It names no field — just "Invalid request."
+        — which is why the bind-time message listing the valid types matters.
+        """
         with pytest.raises(api.TypeSafeError) as excinfo:
             api.ask(
                 "hello", {"q": {"type": "essay", "instructions": "Discuss."}}, credentials=credentials, client=client
             )
-        assert excinfo.value.status == 422
+        assert excinfo.value.status == 400
 
 
 class TestWeAreStricterThanProductionOnPurpose:

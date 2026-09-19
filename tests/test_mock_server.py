@@ -284,6 +284,17 @@ class TestOverHttp:
         assert response.status_code == 422
         assert "'model'" in response.json()["detail"]
 
+    def test_an_unknown_question_type_is_a_400(self) -> None:
+        """Production splits validation failures, so the mock does too; see test_live.py."""
+        request = _request()
+        request["questions"]["department"]["type"] = "essay"
+        with running() as server:
+            response = httpx.post(
+                f"{server.base_url}/v1/systemone", json=request, headers={"Authorization": "Bearer x"}
+            )
+        assert response.status_code == 400
+        assert "'type' must be one of" in response.json()["detail"]
+
     def test_a_rejection_does_not_poison_the_keep_alive_connection(self) -> None:
         """An early 401 must still drain the body, or the next request on the socket breaks."""
         with running(api_key="k") as server, httpx.Client() as client:
