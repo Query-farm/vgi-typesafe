@@ -240,6 +240,7 @@ _CATALOG_TAGS = {
     "provider": "typesafe",
     "domain": "ai-classification",
     "vgi.title": "TypeSafe System One",
+    "vgi.subtitle": "Classify rows, answer yes/no questions and score text from SQL with calibrated confidence",
     "vgi.source_url": SOURCE_URL,
     "vgi.author": "Query Farm LLC <hello@query.farm>",
     "vgi.license": "MIT",
