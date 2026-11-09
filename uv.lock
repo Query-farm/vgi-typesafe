@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -855,19 +855,20 @@ wheels = [
 
 [[package]]
 name = "vgi-python"
-version = "0.34.0"
+version = "0.50.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "httpx2" },
     { name = "platformdirs" },
     { name = "pyarrow" },
+    { name = "pycryptodome" },
     { name = "typer" },
     { name = "vgi-rpc" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0f/29/3d9d12b8a6fb9e836c5d17167b8220a6c632825808f26bcbcc5b4a70d629/vgi_python-0.34.0.tar.gz", hash = "sha256:562d6ee1e156a05806aec1220cf876a5ea83f4e5f43588943fc8af061e10382d", size = 4340189, upload-time = "2026-09-18T03:49:48.343Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1f/65/02db3e8e1fde17bf2d9b080bf6e20c4e6ed2db674efbfc80d0bc1009acfb/vgi_python-0.50.0.tar.gz", hash = "sha256:c1481e064dd7301ad88dd803de0188d29abf25445a80fff041db90e40fdf99e8", size = 5551678, upload-time = "2026-11-08T22:02:43.248Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/5f/c67f30152cbe61403b0b8ef05e1945df3123097fb1500dfdb1c5866a437b/vgi_python-0.34.0-py3-none-any.whl", hash = "sha256:8f26c73dbd19306e45136c1463af2fd6d0a7f51ef0d19b008148dbe8c20c6d22", size = 1185584, upload-time = "2026-09-18T03:49:46.203Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/80/48affe2985a7a7514529b050af290f005d0b4ef7fd9491977f4814ee9f27/vgi_python-0.50.0-py3-none-any.whl", hash = "sha256:69949ca5ad3d6c926e8edb86d92b677c6670caf4e55e499576ce8cb8d60d0534", size = 1442720, upload-time = "2026-11-08T22:02:40.855Z" },
 ]
 
 [package.optional-dependencies]
@@ -877,7 +878,7 @@ http = [
 
 [[package]]
 name = "vgi-rpc"
-version = "0.46.0"
+version = "0.53.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "docstring-parser" },
@@ -885,9 +886,9 @@ dependencies = [
     { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "tzdata", marker = "sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/c1/490fc79a777d4941ee988f194cc855eb76b54c94d34e919edbac262b067d/vgi_rpc-0.46.0.tar.gz", hash = "sha256:cd62a3a5232b3ecfcd804aa15bef00ede6c72a8cb7f781d03651ae53b5652348", size = 1498424, upload-time = "2026-09-17T02:00:03.544Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/87/8d17789a0fc23f5e735abf5e6eb18cbbefb3d3dd6d05f76def9472c6e324/vgi_rpc-0.53.1.tar.gz", hash = "sha256:d149c485285f54ed58dfaa3c941c6b9444bee1dc2090d388a3756518f5af10fb", size = 1647405, upload-time = "2026-11-05T16:18:03.668Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/45/bb31a6560fd952984542cbae2233b30e2788f790aeb4c4de71294198674c/vgi_rpc-0.46.0-py3-none-any.whl", hash = "sha256:52128631bac8f2a5482de4d0b8694935b0f44465db9e3ace81c90c80805f5f7d", size = 692229, upload-time = "2026-09-17T02:00:01.078Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/3e/7ae93da324ac563294e126425a8c9ba1149a65ccab799ab7f5cba0481c3f/vgi_rpc-0.53.1-py3-none-any.whl", hash = "sha256:84d4135835bedf8038ee9d766982bcbd84715dadba4d7f01f3e6bc9c276e3520", size = 765119, upload-time = "2026-11-05T16:18:01.389Z" },
 ]
 
 [package.optional-dependencies]
@@ -926,8 +927,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
-    { name = "vgi-python", specifier = ">=0.34.0" },
-    { name = "vgi-python", extras = ["http"], marker = "extra == 'serve'", specifier = ">=0.34.0" },
+    { name = "vgi-python", specifier = ">=0.50.0" },
+    { name = "vgi-python", extras = ["http"], marker = "extra == 'serve'", specifier = ">=0.50.0" },
 ]
 provides-extras = ["serve"]
 

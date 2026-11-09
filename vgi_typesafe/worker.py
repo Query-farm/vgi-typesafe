@@ -47,7 +47,7 @@ import json
 import sys
 
 from vgi import Worker
-from vgi.catalog import Catalog, ReadOnlyCatalogInterface, Schema, Table
+from vgi.catalog import Catalog, ReadOnlyCatalogInterface, Schema, Table, constraint_record
 from vgi.catalog.catalog_interface import CatalogInfo
 
 from vgi_typesafe import __version__, auth
@@ -447,9 +447,28 @@ _TYPESAFE_CATALOG = Catalog(
                     # takes, so two rows sharing one would make the listing
                     # useless. `_parse_model` refuses a nameless model, and a
                     # description missing upstream is read as an empty one, so
-                    # neither column can arrive NULL.
-                    primary_key=(("name",),),
-                    not_null=("name", "description"),
+                    # neither column can arrive NULL. Under vgi.v3 these are
+                    # canonical records (ENFORCED + ALL_ROWS: every row holds).
+                    constraints=(
+                        constraint_record(
+                            ["main"],
+                            "models",
+                            "pk",
+                            "PRIMARY_KEY",
+                            [["name"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                        ),
+                        constraint_record(
+                            ["main"],
+                            "models",
+                            "description_not_null",
+                            "NOT_NULL",
+                            [["description"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                        ),
+                    ),
                     # Two rows today, and every model TypeSafe has ever
                     # published is still listed. An estimate that is wrong by a
                     # few still beats the planner assuming a scan of unknown size.
