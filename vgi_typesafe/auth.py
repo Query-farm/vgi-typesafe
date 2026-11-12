@@ -47,9 +47,26 @@ SECRET_SPEC = SecretTypeSpec(
     ),
     schema=pa.schema(
         [
-            pa.field(API_KEY, pa.string(), metadata={"redact": "true"}),
-            pa.field(BASE_URL, pa.string()),
-        ]
+            pa.field(
+                API_KEY,
+                pa.string(),
+                metadata={
+                    "redact": "true",
+                    "vgi_doc": "TypeSafe API key (ts-...), generated on the Keys page of the TypeSafe console.",
+                },
+            ),
+            pa.field(
+                BASE_URL,
+                pa.string(),
+                metadata={
+                    "vgi_doc": (
+                        "Optional API endpoint override; defaults to https://api.typesafe.ai. Set it only to "
+                        "target a non-production endpoint such as the bundled mock server."
+                    ),
+                },
+            ),
+        ],
+        metadata={"vgi_doc_url": "https://docs.typesafe.ai/introduction/quickstart"},
     ),
 )
 

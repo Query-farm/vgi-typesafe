@@ -67,4 +67,12 @@ def test_the_key_is_redacted_everywhere_it_could_leak() -> None:
     """repr() reaches logs and tracebacks, and the secret field reaches duckdb_secrets()."""
     assert "k-123" not in repr(auth.Credentials(api_key="k-123"))
     field = auth.SECRET_SPEC.schema.field(auth.API_KEY)
-    assert field.metadata == {b"redact": b"true"}
+    assert field.metadata[b"redact"] == b"true"
+
+
+def test_secret_fields_say_what_they_are_and_where_to_get_them() -> None:
+    """vgi-lint VGI1011/VGI1012: every field carries vgi_doc, the schema a vgi_doc_url."""
+    schema = auth.SECRET_SPEC.schema
+    for field in schema:
+        assert field.metadata and field.metadata.get(b"vgi_doc"), field.name
+    assert schema.metadata[b"vgi_doc_url"].startswith(b"https://")

@@ -460,6 +460,17 @@ _TYPESAFE_CATALOG = Catalog(
                             enforcement="ENFORCED",
                             validation="ALL_ROWS",
                         ),
+                        # Under vgi.v3 a PRIMARY KEY record does not imply
+                        # NOT NULL, so the key column carries its own record.
+                        constraint_record(
+                            ["main"],
+                            "models",
+                            "name_not_null",
+                            "NOT_NULL",
+                            [["name"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                        ),
                         constraint_record(
                             ["main"],
                             "models",
