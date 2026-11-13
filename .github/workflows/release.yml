@@ -1,15 +1,8 @@
 name: Release
 
 # On a published GitHub Release: gate on the full test suite (ci.yml), build the sdist +
-# wheel, attach them to the Release, and (opt-in) publish to PyPI.
-#
-# A VGI worker written against vgi-python ships to PyPI, not as a compiled binary — the
-# README's ATTACH LOCATION is a `uvx` invocation, so what is on PyPI is what users run.
-# The upload uses Trusted Publishing (OIDC, no API tokens) and is GATED behind the repo
-# variable PYPI_PUBLISH: it stays skipped until a maintainer sets `PYPI_PUBLISH=true` AND
-# configures a Trusted Publisher on PyPI for the `vgi-typesafe` project pointing at:
-#   owner: Query-farm · repo: vgi-typesafe · workflow: release.yml · environment: pypi
-# Until then the Release still ships installable sdist+wheel assets, CI-gated and green.
+# wheel, and attach them to the Release. VGI workers are not published to PyPI; users
+# install from the GitHub Release (or the ghcr.io image).
 
 on:
   release:
@@ -51,22 +44,3 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
-
-  publish:
-    name: Publish to PyPI (opt-in)
-    needs: [build]
-    # Skipped until the maintainer enables PyPI Trusted Publishing (see header). A skipped
-    # job does not fail the workflow, so releases stay green before PyPI is configured.
-    if: ${{ vars.PYPI_PUBLISH == 'true' }}
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write # required for Trusted Publishing
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-      - name: Publish
-        uses: pypa/gh-action-pypi-publish@release/v1
