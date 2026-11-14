@@ -1,0 +1,11 @@
+{
+  "repository": "Query-farm/vgi-typesafe",
+  "release_tag": "v0.3.0",
+  "release_revision": "ad5bdee08fe48d2829164f0ccca241fe6ac95e15",
+  "current_public_revision": "f307ada9abb3b42d32a850d7a4524f5ca048ba94",
+  "engine": "Haybarn 2.0.0rc11 / VGI e75482339d",
+  "released_launch": "uvx --from git+https://github.com/Query-farm/vgi-typesafe@v0.3.0 vgi-typesafe",
+  "comparison": "Exhaustive public-main registration at f307ada9abb3b42d32a850d7a4524f5ca048ba94 finds seven named functions and a same-named models table alias, with no views or excluded authentication/write surfaces. Complete release-to-current implementation diff contains metadata/composed-example additions only; API/authentication/scoring/dependency behavior unchanged. Current-interface mappings are compatibility-reviewed against released runtime with a local synthetic service. No current build/exact-current execution or live service validation is claimed.",
+  "data_isolation": "Fresh empty temporary SQL-secret storage; persistent disabled; explicit temporary fake secret with loopback base_url. Bundled keyword mock and synthetic ticket strings only. Local inference POSTs and model-list GETs; no production credentials, live API or ticket updates.",
+  "captured_at": "2026-11-14T21:15:32.778848+00:00"
+}

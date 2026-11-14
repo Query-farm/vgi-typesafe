@@ -1,0 +1,49 @@
+{
+  "query": "SELECT * FROM duckdb_databases() WHERE database_name='typesafe'",
+  "columns": [
+    "database_name",
+    "database_oid",
+    "path",
+    "comment",
+    "tags",
+    "internal",
+    "type",
+    "readonly",
+    "encrypted",
+    "cipher",
+    "options"
+  ],
+  "rows": [
+    [
+      "typesafe",
+      22592,
+      null,
+      "TypeSafe System One questions (choice, noul, score) as LATERAL-joinable table functions",
+      {
+        "domain": "ai-classification",
+        "provider": "typesafe",
+        "vgi.agent_test_tasks": "[{\"name\": \"route_a_support_ticket\", \"prompt\": \"Route this support message to the right team \\u2014 shipping, billing or returns \\u2014 and tell me how confident the model was: 'My package never arrived and the tracking has not updated in a week.'\"}, {\"name\": \"several_judgments_one_request\", \"prompt\": \"For the message 'I was charged twice and nobody has replied to me in three days', I want three things at once: which team should handle it, whether the customer sounds angry, and how severe it is on a three-point scale. Do it without paying for three separate API calls.\"}, {\"name\": \"ask_each_row_its_own_question\", \"prompt\": \"My queue stores the question it wants asked alongside each row, and they are not all the same kind of question \\u2014 one row wants its ticket routed to a team, the next wants a yes/no. I cannot hard-code one fixed set of questions for the whole query. How do I ask each row the question it carries, and read the answers back?\"}, {\"name\": \"route_only_the_confident_ones\", \"prompt\": \"Classify these two messages into shipping or billing \\u2014 'my package is lost in delivery' and 'my invoice shows a wrong charge' \\u2014 but only keep the rows the model was confident about, so the rest can go to a human.\"}, {\"name\": \"judge_a_whole_row\", \"prompt\": \"I have rows where several columns matter together \\u2014 a message, a customer tier and an order id. Ask one yes/no question about the whole row rather than just the message column.\"}, {\"name\": \"find_out_what_columns_come_back\", \"prompt\": \"Before I run this against real data: what columns and types come back if I ask a choice question and a yes/no question about the same row?\"}, {\"name\": \"flag_which_messages_need_a_reply\", \"prompt\": \"For these two messages \\u2014 'My package never arrived and nobody has replied in three days' and 'Thanks, just a routine question' \\u2014 I do not want a yes or a no. I want to know how likely each one is to need a reply today, so I can pick my own cut-off later.\"}, {\"name\": \"rate_severity_on_a_scale\", \"prompt\": \"Rate 'The whole site is down and no orders can be placed' on a three-point severity scale running from a minor question up to a critical outage, and tell me how sure the model was.\"}, {\"name\": \"filter_rows_by_a_yes_no_question\", \"prompt\": \"From these two messages \\u2014 'My package never arrived' and 'Thanks for the quick refund' \\u2014 keep only the ones about a lost package. I want the AI judgment inline in the WHERE clause, not joined in as a separate table.\"}, {\"name\": \"which_models_can_i_ask_for\", \"prompt\": \"I do not want to be stuck on whatever model is the default. Which models can I actually name here, and when was each one published?\"}]",
+        "vgi.author": "Query Farm LLC <hello@query.farm>",
+        "vgi.copyright": "Worker (c) 2026 Query Farm LLC - https://query.farm. Judgments are produced by TypeSafe's System One models and are subject to TypeSafe's terms of use.",
+        "vgi.doc_llm": "Structured AI judgments from TypeSafe's System One model, as SQL. Unlike a text-generating LLM, it answers a typed question about a piece of content and returns a value software can consume directly. Reach for this catalog to classify rows of a table into a fixed set of options \u2014 ticket routing, intent detection, content labelling \u2014 to answer a yes/no question as a probability rather than a verdict, or to place a row on an ordered scale. Every answer carries a calibrated confidence. `models()` lists the models a question may name. Requires a `typesafe` secret holding an API key.",
+        "vgi.doc_md": "TypeSafe evaluates typed questions against a *state* \u2014 the content being judged \u2014 and answers with structured values rather than prose.\n\n### The two things you write\n\nA **state** is what you are judging: a piece of text, a struct built from several columns, a whole row, or a list. Descriptive field names help, because they tell the model how the parts relate.\n\nA **question** has a type, an instruction, and usually criteria. There are three types. A *choice* picks one option from a set you define and reports a probability for every option. A *noul* answers yes or no as a probability between 0 and 1, where 0.5 means genuinely undecided. A *score* places the state on an ordered scale you define, and returns a probability-weighted position rather than a single rung.\n\n### Reading an answer\n\nEvery judgment except a noul carries a `confidence`: how concentrated the probability distribution was. It is the field to filter on when you want to route the clear cases automatically and send the rest to a person. A noul needs no such field, because a probability near 0.5 already says the model could not decide.\n\n### Authentication\n\nCredentials come from a redacted DuckDB secret; its optional `base_url` field points the worker at another endpoint, such as the bundled mock server (`uv run vgi-typesafe-mock`). See a question function's examples for the statement.\n\n### Cost\n\nOne API request per distinct piece of work in an input batch \u2014 a state together with the questions asked of it \u2014 however many questions that is, so asking five things about a row costs the same as asking one. Requests within a batch run concurrently; rate-limit and overload responses are retried with backoff.",
+        "vgi.executable_examples": "[{\"name\": \"ask_shapes_its_columns_from_the_questions\", \"description\": \"The result columns are built from the `questions` argument at bind time \\u2014 one typed STRUCT per question, then `usage`. DESCRIBE only binds, so this runs without an API key and issues no request.\", \"sql\": \"DESCRIBE SELECT * FROM typesafe.main.ask('a lost package', questions => {'dept': {'type': 'choice', 'instructions': 'Which team?', 'criteria': {'shipping': 'Delays and lost packages', 'billing': 'Invoices'}}, 'urgent': {'type': 'noul', 'instructions': 'Does this need a reply today?'}})\", \"expected_result\": [{\"column_name\": \"dept\", \"column_type\": \"STRUCT(choice VARCHAR, confidence DOUBLE, probabilities MAP(VARCHAR, DOUBLE))\", \"null\": \"YES\", \"key\": null, \"default\": null, \"extra\": null}, {\"column_name\": \"urgent\", \"column_type\": \"STRUCT(noul DOUBLE)\", \"null\": \"YES\", \"key\": null, \"default\": null, \"extra\": null}, {\"column_name\": \"usage\", \"column_type\": \"STRUCT(model VARCHAR, input_tokens BIGINT, output_tokens BIGINT)\", \"null\": \"YES\", \"key\": null, \"default\": null, \"extra\": null}]}]",
+        "vgi.keywords": "[\"typesafe\", \"system one\", \"classification\", \"choice\", \"noul\", \"score\", \"yes/no\", \"scale\", \"routing\", \"confidence\", \"jev\", \"models\"]",
+        "vgi.license": "MIT",
+        "vgi.source_url": "https://github.com/Query-farm/vgi-typesafe",
+        "vgi.subtitle": "Classify rows, answer yes/no questions and score text from SQL with calibrated confidence",
+        "vgi.support_contact": "https://github.com/Query-farm/vgi-typesafe/issues",
+        "vgi.support_policy_url": "https://github.com/Query-farm/vgi-typesafe/blob/main/README.md",
+        "vgi.title": "TypeSafe System One"
+      },
+      false,
+      "vgi",
+      false,
+      false,
+      null,
+      {
+        "location": "uvx --from git+https://github.com/Query-farm/vgi-typesafe@v0.3.0 vgi-typesafe"
+      }
+    ]
+  ]
+}

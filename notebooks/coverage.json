@@ -1,0 +1,299 @@
+{
+  "schema_version": 1,
+  "catalogs": {
+    "released": {
+      "path": "coverage/catalog-released.json",
+      "sha256": "b0446ae2aa96e23f850d4aec228da85bcf20b150e1858565b5caf795fb34a3af",
+      "review": {
+        "status": "approved",
+        "reviewer": "Codex /root/notebooks_ortools",
+        "reviewed_at": "2026-11-14T21:15:32.778848+00:00",
+        "catalog_sha256": "b0446ae2aa96e23f850d4aec228da85bcf20b150e1858565b5caf795fb34a3af",
+        "notes": "Seven named surfaces, all authenticated, retained. Models table/function aliases count once. Inference POSTs compute answers and may incur real-service usage; these demonstrations use only the disposable local fixture. Exhaustive public-main registration at f307ada9abb3b42d32a850d7a4524f5ca048ba94 finds seven named functions and a same-named models table alias, with no views or excluded authentication/write surfaces. Complete release-to-current implementation diff contains metadata/composed-example additions only; API/authentication/scoring/dependency behavior unchanged. Current-interface mappings are compatibility-reviewed against released runtime with a local synthetic service. No current build/exact-current execution or live service validation is claimed."
+      }
+    },
+    "current": {
+      "path": "coverage/catalog-current.json",
+      "sha256": "266a4a9df208216740980f773ef2fae39048d4b07d972eb83f0ff8b088dc18ac",
+      "review": {
+        "status": "approved",
+        "reviewer": "Codex /root/notebooks_ortools",
+        "reviewed_at": "2026-11-14T21:15:32.778848+00:00",
+        "catalog_sha256": "266a4a9df208216740980f773ef2fae39048d4b07d972eb83f0ff8b088dc18ac",
+        "notes": "Seven named surfaces, all authenticated, retained. Models table/function aliases count once. Inference POSTs compute answers and may incur real-service usage; these demonstrations use only the disposable local fixture. Exhaustive public-main registration at f307ada9abb3b42d32a850d7a4524f5ca048ba94 finds seven named functions and a same-named models table alias, with no views or excluded authentication/write surfaces. Complete release-to-current implementation diff contains metadata/composed-example additions only; API/authentication/scoring/dependency behavior unchanged. Current-interface mappings are compatibility-reviewed against released runtime with a local synthetic service. No current build/exact-current execution or live service validation is claimed."
+      }
+    }
+  },
+  "notebooks": [
+    {
+      "path": "01_route_typed_answers_with_uncertainty.ipynb",
+      "sha256": "fec71e07c5634645878ce08fe87a3cfc34b4d5a2727b233feb451eef77cbfe7c",
+      "execution": {
+        "path": "coverage/run-01.json",
+        "sha256": "b3615522a88e9115fe444282590fd1d4a936405229be8077641b1450556a6825"
+      }
+    },
+    {
+      "path": "02_choose_the_follow_up_per_row.ipynb",
+      "sha256": "82a473b557868c392c071edad2df10641eaf775cb370e87314e180cb535902e3",
+      "execution": {
+        "path": "coverage/run-02.json",
+        "sha256": "bf605b118eba1feb25b4ffd318ac357f8b5fd8d9cb59da52d36093eb0f770f04"
+      }
+    }
+  ],
+  "examples": [
+    {
+      "object": {
+        "schema": "main",
+        "name": "models"
+      },
+      "notebook": "01_route_typed_answers_with_uncertainty.ipynb",
+      "sql": [
+        {
+          "cell": "7361671e",
+          "reference": "typesafe.main.models"
+        }
+      ],
+      "narrative_cells": [
+        "2881bcbb"
+      ],
+      "result_cells": [
+        "7361671e",
+        "842c39f1",
+        "b02d23f8"
+      ],
+      "interpretation_cells": [
+        "2881bcbb"
+      ],
+      "review": {
+        "status": "approved",
+        "reviewer": "Codex /root/notebooks_ortools",
+        "reviewed_at": "2026-11-14T21:15:32.778848+00:00",
+        "notebook_sha256": "fec71e07c5634645878ce08fe87a3cfc34b4d5a2727b233feb451eef77cbfe7c",
+        "catalog_sha256": [
+          "b0446ae2aa96e23f850d4aec228da85bcf20b150e1858565b5caf795fb34a3af",
+          "266a4a9df208216740980f773ef2fae39048d4b07d972eb83f0ff8b088dc18ac"
+        ],
+        "purpose": "Discover a supported model alias, reconcile table/function access and explicitly request it in typed questions.",
+        "finding": "The local listing returns jev-latest and jev-preview; both access forms agree. The notebook asserts jev-latest is available and passes it explicitly to ask. The request audit retains the requested alias while returned usage names its resolved fixture version. These labels do not establish contact with a production model."
+      }
+    },
+    {
+      "object": {
+        "schema": "main",
+        "name": "ask"
+      },
+      "notebook": "01_route_typed_answers_with_uncertainty.ipynb",
+      "sql": [
+        {
+          "cell": "842c39f1",
+          "reference": "typesafe.main.ask"
+        }
+      ],
+      "narrative_cells": [
+        "ee0abae8"
+      ],
+      "result_cells": [
+        "842c39f1",
+        "355dd833",
+        "c7c2972c",
+        "b02d23f8"
+      ],
+      "interpretation_cells": [
+        "355dd833"
+      ],
+      "review": {
+        "status": "approved",
+        "reviewer": "Codex /root/notebooks_ortools",
+        "reviewed_at": "2026-11-14T21:15:32.778848+00:00",
+        "notebook_sha256": "fec71e07c5634645878ce08fe87a3cfc34b4d5a2727b233feb451eef77cbfe7c",
+        "catalog_sha256": [
+          "b0446ae2aa96e23f850d4aec228da85bcf20b150e1858565b5caf795fb34a3af",
+          "266a4a9df208216740980f773ef2fae39048d4b07d972eb83f0ff8b088dc18ac"
+        ],
+        "purpose": "Ask three typed questions per distinct body while retaining nine original ticket identities and uncertainty.",
+        "finding": "Seven local requests answer three questions each for seven distinct non-NULL bodies; eight answered ticket records retain the duplicate and one remains missing. Choice distribution/concentration, yes/no probability and ordered score stay distinct. Lowering routing confidence changes only the SQL disposition and no underlying answer."
+      }
+    },
+    {
+      "object": {
+        "schema": "main",
+        "name": "choice"
+      },
+      "notebook": "02_choose_the_follow_up_per_row.ipynb",
+      "sql": [
+        {
+          "cell": "followup-flat",
+          "reference": "typesafe.main.choice"
+        }
+      ],
+      "narrative_cells": [
+        "followup-flat-story"
+      ],
+      "result_cells": [
+        "followup-flat",
+        "followup-measures-chart",
+        "followup-dynamic"
+      ],
+      "interpretation_cells": [
+        "followup-measures-chart"
+      ],
+      "review": {
+        "status": "approved",
+        "reviewer": "Codex /root/notebooks_ortools",
+        "reviewed_at": "2026-11-14T21:15:32.778848+00:00",
+        "notebook_sha256": "82a473b557868c392c071edad2df10641eaf775cb370e87314e180cb535902e3",
+        "catalog_sha256": [
+          "b0446ae2aa96e23f850d4aec228da85bcf20b150e1858565b5caf795fb34a3af",
+          "266a4a9df208216740980f773ef2fae39048d4b07d972eb83f0ff8b088dc18ac"
+        ],
+        "purpose": "Use an inspectable proposed team to choose a follow-up, retaining low-confidence ties.",
+        "finding": "Five rows survive, including missing input; the shipping/billing tie chooses shipping with about0.194 confidence. Three clear keyword cases and that uncertain proposal feed explicit per-row follow-up questions without updating any ticket."
+      }
+    },
+    {
+      "object": {
+        "schema": "main",
+        "name": "noul"
+      },
+      "notebook": "02_choose_the_follow_up_per_row.ipynb",
+      "sql": [
+        {
+          "cell": "followup-flat",
+          "reference": "typesafe.main.noul"
+        }
+      ],
+      "narrative_cells": [
+        "followup-flat-story"
+      ],
+      "result_cells": [
+        "followup-flat",
+        "followup-measures-chart",
+        "followup-scalar"
+      ],
+      "interpretation_cells": [
+        "followup-scalar-result"
+      ],
+      "review": {
+        "status": "approved",
+        "reviewer": "Codex /root/notebooks_ortools",
+        "reviewed_at": "2026-11-14T21:15:32.778848+00:00",
+        "notebook_sha256": "82a473b557868c392c071edad2df10641eaf775cb370e87314e180cb535902e3",
+        "catalog_sha256": [
+          "b0446ae2aa96e23f850d4aec228da85bcf20b150e1858565b5caf795fb34a3af",
+          "266a4a9df208216740980f773ef2fae39048d4b07d972eb83f0ff8b088dc18ac"
+        ],
+        "purpose": "Keep yes/no probability separate from confidence and reconcile equivalent scalar/table questions.",
+        "finding": "Refund-like synthetic bodies return about0.731, other non-NULL bodies about0.269. All five scalar/table pairs agree, including NULL. Only tickets2and3 meet the illustrative0.7local policy. The fixture cannot establish calibration or a recommended threshold."
+      }
+    },
+    {
+      "object": {
+        "schema": "main",
+        "name": "score"
+      },
+      "notebook": "02_choose_the_follow_up_per_row.ipynb",
+      "sql": [
+        {
+          "cell": "followup-flat",
+          "reference": "typesafe.main.score"
+        }
+      ],
+      "narrative_cells": [
+        "followup-flat-story"
+      ],
+      "result_cells": [
+        "followup-flat",
+        "followup-measures-chart",
+        "followup-check-result"
+      ],
+      "interpretation_cells": [
+        "followup-measures-chart"
+      ],
+      "review": {
+        "status": "approved",
+        "reviewer": "Codex /root/notebooks_ortools",
+        "reviewed_at": "2026-11-14T21:15:32.778848+00:00",
+        "notebook_sha256": "82a473b557868c392c071edad2df10641eaf775cb370e87314e180cb535902e3",
+        "catalog_sha256": [
+          "b0446ae2aa96e23f850d4aec228da85bcf20b150e1858565b5caf795fb34a3af",
+          "266a4a9df208216740980f773ef2fae39048d4b07d972eb83f0ff8b088dc18ac"
+        ],
+        "purpose": "Interpret an ordered score as a weighted position and reconstruct it from the returned level distribution.",
+        "finding": "The critical-outage fixture scores about1.851 and the routine-question fixture about0.053 on levels0–2. Uniform cases score1with zero confidence rather than establishing a confident middle class. SQL reconstructs every non-NULL weighted position and checks bounds."
+      }
+    },
+    {
+      "object": {
+        "schema": "main",
+        "name": "is_true"
+      },
+      "notebook": "02_choose_the_follow_up_per_row.ipynb",
+      "sql": [
+        {
+          "cell": "followup-scalar",
+          "reference": "typesafe.main.is_true"
+        }
+      ],
+      "narrative_cells": [
+        "followup-scalar-story"
+      ],
+      "result_cells": [
+        "followup-scalar",
+        "followup-scalar-result"
+      ],
+      "interpretation_cells": [
+        "followup-scalar-result"
+      ],
+      "review": {
+        "status": "approved",
+        "reviewer": "Codex /root/notebooks_ortools",
+        "reviewed_at": "2026-11-14T21:15:32.778848+00:00",
+        "notebook_sha256": "82a473b557868c392c071edad2df10641eaf775cb370e87314e180cb535902e3",
+        "catalog_sha256": [
+          "b0446ae2aa96e23f850d4aec228da85bcf20b150e1858565b5caf795fb34a3af",
+          "266a4a9df208216740980f773ef2fae39048d4b07d972eb83f0ff8b088dc18ac"
+        ],
+        "purpose": "Materialize scalar probabilities before filtering and compare with the equivalent noul table projection.",
+        "finding": "The scalar returns probabilities rather than Booleans. All five pairs agree including missing input; four extra local requests show that equivalence is not shared caching. The local0.7predicate selects tickets2and3 without a scalar-WHERE-plus-LATERAL plan."
+      }
+    },
+    {
+      "object": {
+        "schema": "main",
+        "name": "ask_dynamic"
+      },
+      "notebook": "02_choose_the_follow_up_per_row.ipynb",
+      "sql": [
+        {
+          "cell": "followup-dynamic",
+          "reference": "typesafe.main.ask_dynamic"
+        }
+      ],
+      "narrative_cells": [
+        "followup-dynamic-story"
+      ],
+      "result_cells": [
+        "followup-dynamic",
+        "followup-chart",
+        "followup-check-result"
+      ],
+      "interpretation_cells": [
+        "followup-chart"
+      ],
+      "review": {
+        "status": "approved",
+        "reviewer": "Codex /root/notebooks_ortools",
+        "reviewed_at": "2026-11-14T21:15:32.778848+00:00",
+        "notebook_sha256": "82a473b557868c392c071edad2df10641eaf775cb370e87314e180cb535902e3",
+        "catalog_sha256": [
+          "b0446ae2aa96e23f850d4aec228da85bcf20b150e1858565b5caf795fb34a3af",
+          "266a4a9df208216740980f773ef2fae39048d4b07d972eb83f0ff8b088dc18ac"
+        ],
+        "purpose": "Carry team-specific question text per row, extract a known JSON answer field and audit exact outbound payloads.",
+        "finding": "Shipping asks delay, returns damage, and billing asks refund then overdue in the experiment. Billing probability changes about0.731→0.269 while other questions/answers and all first-stage measurements remain fixed. Missing input stays NULL, and twenty one-question local requests reconcile exactly."
+      }
+    }
+  ]
+}

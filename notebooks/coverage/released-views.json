@@ -1,0 +1,19 @@
+{
+  "query": "SELECT * FROM duckdb_views() WHERE database_name='typesafe'",
+  "columns": [
+    "database_name",
+    "database_oid",
+    "schema_name",
+    "schema_oid",
+    "view_name",
+    "view_oid",
+    "comment",
+    "tags",
+    "internal",
+    "temporary",
+    "column_count",
+    "sql",
+    "is_bound"
+  ],
+  "rows": []
+}

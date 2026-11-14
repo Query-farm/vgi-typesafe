@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "repository": "Query-farm/vgi-typesafe",
+  "revision": "f307ada9abb3b42d32a850d7a4524f5ca048ba94",
+  "captured_at": "2026-11-14T21:15:32.778848+00:00",
+  "default_schema": "main",
+  "scope": "all_public_functions_and_tables",
+  "complete": true,
+  "evidence": [
+    {
+      "path": "coverage/catalog-provenance.json",
+      "sha256": "dfdd21e67096095afeb63b8194d98e4d7606f297b7269e33d53b8c95d158c96c",
+      "description": "Runtime/source identities, synthetic-service boundary and compatibility review."
+    },
+    {
+      "path": "coverage/current-source-registration.json",
+      "sha256": "693220ef0de0ddbdb23b81b1b8255190cad14095059dfad59541dd770822d952",
+      "description": "Exhaustive registrations, immutable source links/hashes and complete implementation diff; no current runtime execution."
+    }
+  ],
+  "objects": [
+    {
+      "schema": "main",
+      "name": "ask_dynamic",
+      "kind": "function",
+      "signatures": [
+        "ask_dynamic(ANY, ANY, VARCHAR, BIGINT) -> TABLE"
+      ],
+      "authentication": "required",
+      "access": "read"
+    },
+    {
+      "schema": "main",
+      "name": "choice",
+      "kind": "function",
+      "signatures": [
+        "choice(VARCHAR, VARCHAR, VARCHAR, MAP(VARCHAR, VARCHAR), BIGINT) -> TABLE"
+      ],
+      "authentication": "required",
+      "access": "read"
+    },
+    {
+      "schema": "main",
+      "name": "models",
+      "kind": "function",
+      "signatures": [
+        "models() -> TABLE"
+      ],
+      "authentication": "required",
+      "access": "read"
+    },
+    {
+      "schema": "main",
+      "name": "noul",
+      "kind": "function",
+      "signatures": [
+        "noul(VARCHAR, VARCHAR, VARCHAR, MAP(VARCHAR, VARCHAR), BIGINT) -> TABLE"
+      ],
+      "authentication": "required",
+      "access": "read"
+    },
+    {
+      "schema": "main",
+      "name": "score",
+      "kind": "function",
+      "signatures": [
+        "score(VARCHAR, VARCHAR, VARCHAR, VARCHAR[], BIGINT) -> TABLE"
+      ],
+      "authentication": "required",
+      "access": "read"
+    },
+    {
+      "schema": "main",
+      "name": "ask",
+      "kind": "function",
+      "signatures": [
+        "ask(ANY, ANY, BOOLEAN, VARCHAR, BIGINT) -> TABLE"
+      ],
+      "authentication": "required",
+      "access": "read"
+    },
+    {
+      "schema": "main",
+      "name": "is_true",
+      "kind": "function",
+      "signatures": [
+        "is_true(VARCHAR, VARCHAR) -> DOUBLE"
+      ],
+      "authentication": "required",
+      "access": "read"
+    },
+    {
+      "schema": "main",
+      "name": "models",
+      "kind": "table",
+      "signatures": [
+        "TABLE"
+      ],
+      "authentication": "required",
+      "access": "read"
+    }
+  ]
+}

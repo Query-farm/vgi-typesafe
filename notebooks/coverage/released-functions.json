@@ -1,0 +1,337 @@
+{
+  "query": "SELECT * FROM duckdb_functions() WHERE database_name='typesafe'",
+  "columns": [
+    "database_name",
+    "database_oid",
+    "schema_name",
+    "function_name",
+    "alias_of",
+    "function_type",
+    "description",
+    "comment",
+    "tags",
+    "return_type",
+    "parameters",
+    "parameter_types",
+    "varargs",
+    "macro_definition",
+    "has_side_effects",
+    "internal",
+    "extension_name",
+    "function_oid",
+    "examples",
+    "stability",
+    "categories"
+  ],
+  "rows": [
+    [
+      "typesafe",
+      "22592",
+      "main",
+      "ask_dynamic",
+      null,
+      "table",
+      "Ask TypeSafe questions that can differ from row to row, answering each row as one JSON object",
+      null,
+      {
+        "vgi.category": "classification",
+        "vgi.doc_llm": "Ask TypeSafe questions that are chosen per row rather than fixed for the whole query, and read each row's answers back as JSON. Both positional arguments are per-row input columns, so a column of questions may carry a different set \u2014 different names, different types, different criteria \u2014 on every row. That flexibility costs the typed columns `ask()` gives you: because no shape is known when the query is planned, all of a row's answers arrive inside one JSON value that DuckDB's JSON functions take apart. Prefer `ask()` whenever the questions are the same for every row; reach for this only when they genuinely vary, such as a rules table joined to the rows it governs. The question types and their answers are `ask()`'s: a choice reports the chosen option with a confidence and a distribution, a noul reports a probability, a score reports a position on the scale. Cost is one request per distinct pairing of content and questions. Needs a `typesafe` secret.",
+        "vgi.doc_md": "Per-row questions, answered as JSON.\n\n### When to reach for this instead of `ask()`\n\n`ask()` is almost always the one you want. Its questions are fixed when the query is planned, so it can give you one typed column per question \u2014 a `STRUCT` whose fields suit that question's type, readable with a dot. `ask_dynamic()` trades those typed columns away. Here the questions are a per-row input column, so two rows in one scan may ask entirely different things, and nothing about the result shape can be known at plan time. Everything a row was told therefore comes back inside one JSON column that you take apart yourself.\n\nThat makes this the more awkward of the two, and it should not be anyone's default. Use it when the questions genuinely vary per row: a rules table joined to the rows it governs, a work queue where each item carries its own rubric, questions assembled by an application. If every row asks the same thing, use `ask()` and keep the typed columns.\n\n### The two positional arguments\n\nBoth are per-row input columns. The first is the content being judged, in the same shapes `ask()` accepts: text, a `STRUCT` (the row alias itself works), a `LIST` or a `MAP`, sent to the API as the equivalent JSON object or array.\n\nThe second carries that row's questions, in either of two forms.\n\n- JSON text is the form to prefer when the questions really differ: each row carries its own shape verbatim, and nothing is reconciled against any other row.\n- A `STRUCT` or `MAP` column works too, and reads better when the questions vary only in their wording. DuckDB unifies a column's type across rows, though, so a question only some rows ask is padded onto all of them as NULL. Those NULLs are dropped before the request, so that much is harmless \u2014 but two rows that give one question name two different criteria shapes cannot be unified at all, and DuckDB rejects the query before this worker sees it.\n\n`model =>` and `concurrency =>` stay named, because a blended function's positional arguments are input columns rather than plan-time constants.\n\n### Reading the answers\n\nThe `answers` column is a JSON object keyed by question name, and each value is the answer object for that question's type:\n\n| Question type | Answer object |\n| --- | --- |\n| choice | `choice`, `confidence`, and `probabilities` keyed by option |\n| noul | `noul`, a probability where near 1 is yes and 0.5 is genuinely undecided |\n| score | `score`, `confidence`, and `probabilities` keyed by level number, where 0 is the first criterion |\n\nKeys in JSON are text, so a score level reads back as the digits of its number. DuckDB's JSON operators and the `json_extract` family are what take all this apart; this function's example queries show the exact spelling.\n\nWhat a row cost does not vary in shape, so it stays in real columns beside the JSON rather than inside it: `model`, `input_tokens` and `output_tokens`.\n\n### Row semantics\n\nStrictly one output row per input row. A NULL state \u2014 or a struct or list holding no non-null content \u2014 answers NULL and makes no request; its questions are not examined, because nothing is being asked of it. Any other row that carries no questions is an error that names the row and quotes what it held, since a per-row argument cannot be checked when the query is planned.\n\nRepeated work is collapsed on the pair, not on the content alone: two rows asking the same thing of the same content share one request, while the same content asked two different things is two requests. Errors raise \u2014 only a NULL input answers NULL, so a failure can never be mistaken for one.\n\n### Authentication\n\nCredentials come from a `typesafe` secret, or from `TYPESAFE_API_KEY` in the worker's environment.",
+        "vgi.example_queries": "[{\"description\": \"Ask each row the questions that row carries\", \"sql\": \"SELECT t.id, a.answers->'dept'->>'choice' AS dept, a.answers->'urgent'->>'noul' AS urgent FROM (VALUES (1, 'My package is lost and delivery is delayed', '{\\\"dept\\\": {\\\"type\\\": \\\"choice\\\", \\\"instructions\\\": \\\"Which team should handle this?\\\", \\\"criteria\\\": {\\\"shipping\\\": \\\"Delivery status, delays, lost packages\\\", \\\"billing\\\": \\\"Charges, invoices, payment problems\\\"}}}'), (2, 'Thanks, just one routine question', '{\\\"urgent\\\": {\\\"type\\\": \\\"noul\\\", \\\"instructions\\\": \\\"Does this need a reply today?\\\"}}')) t(id, body, questions), LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a ORDER BY t.id\"}, {\"description\": \"Pull one answer out of the JSON\", \"sql\": \"SELECT answers->'dept'->>'choice' AS dept, (answers->'dept'->>'confidence')::DOUBLE AS confidence FROM typesafe.main.ask_dynamic('I was charged twice on my invoice', '{\\\"dept\\\": {\\\"type\\\": \\\"choice\\\", \\\"instructions\\\": \\\"Which team should handle this?\\\", \\\"criteria\\\": {\\\"shipping\\\": \\\"Delivery status, delays, lost packages\\\", \\\"billing\\\": \\\"Charges, invoices, payment problems\\\"}}}')\"}]",
+        "vgi.result_columns_schema": "[{\"name\": \"answers\", \"type\": \"VARCHAR\", \"description\": \"Every answer for this row as a JSON object keyed by question name; each value is the answer object for that question's type. NULL when the input state was NULL.\"}, {\"name\": \"model\", \"type\": \"VARCHAR\", \"description\": \"The model that answered, as reported by the API.\"}, {\"name\": \"input_tokens\", \"type\": \"BIGINT\", \"description\": \"Input tokens billed for this row's request.\"}, {\"name\": \"output_tokens\", \"type\": \"BIGINT\", \"description\": \"Output tokens billed for this row's request.\"}]"
+      },
+      null,
+      [
+        "state",
+        "questions",
+        "model",
+        "concurrency"
+      ],
+      [
+        "ANY",
+        "ANY",
+        "VARCHAR",
+        "BIGINT"
+      ],
+      null,
+      null,
+      null,
+      true,
+      null,
+      22730,
+      [
+        "SELECT t.id, a.answers->'dept'->>'choice' AS dept, a.answers->'urgent'->>'noul' AS urgent FROM (VALUES (1, 'My package is lost and delivery is delayed', '{\"dept\": {\"type\": \"choice\", \"instructions\": \"Which team should handle this?\", \"criteria\": {\"shipping\": \"Delivery status, delays, lost packages\", \"billing\": \"Charges, invoices, payment problems\"}}}'), (2, 'Thanks, just one routine question', '{\"urgent\": {\"type\": \"noul\", \"instructions\": \"Does this need a reply today?\"}}')) t(id, body, questions), LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a ORDER BY t.id",
+        "SELECT answers->'dept'->>'choice' AS dept, (answers->'dept'->>'confidence')::DOUBLE AS confidence FROM typesafe.main.ask_dynamic('I was charged twice on my invoice', '{\"dept\": {\"type\": \"choice\", \"instructions\": \"Which team should handle this?\", \"criteria\": {\"shipping\": \"Delivery status, delays, lost packages\", \"billing\": \"Charges, invoices, payment problems\"}}}')"
+      ],
+      null,
+      [
+        "classification",
+        "scoring",
+        "blended"
+      ]
+    ],
+    [
+      "typesafe",
+      "22592",
+      "main",
+      "choice",
+      null,
+      "table",
+      "Classify each row into one of a set of options with a TypeSafe choice question",
+      null,
+      {
+        "vgi.category": "classification",
+        "vgi.doc_llm": "Classify text into exactly one of a fixed set of options using TypeSafe's System One model. Pass the text as the positional argument \u2014 a literal, or a column under LATERAL to classify a whole table \u2014 and describe the question once with the named `instructions` and `criteria` arguments. Returns one row per input row: the chosen option, a 0-1 confidence, and the full probability distribution as a `MAP`. Filter on `confidence` to route uncertain rows to review. Needs a `typesafe` secret.",
+        "vgi.doc_md": "One TypeSafe choice question, asked of every input row.\n\n### Arguments\n\n- `state` (positional): the content to evaluate. A literal, or a column.\n- `instructions =>`: the question, e.g. `'Which team should handle this?'`.\n- `criteria =>`: a `MAP` from option name to a description of when it applies. Up to 255 options; include an `'other'` option when the list may be incomplete.\n- `model =>`: defaults to `jev-latest`.\n- `concurrency =>`: in-flight requests per batch (default 8).\n\n### Row semantics\n\nStrictly one output row per input row. A NULL state yields a row of NULLs and makes no request. Identical states within a batch are asked once.\n\n### Errors\n\nAn API failure raises \u2014 it never degrades to NULL, which would be indistinguishable from a NULL input. 429 and 529 are retried with backoff first.\n\n### Authentication\n\nAdd `base_url` to the secret to target the bundled mock endpoint. `TYPESAFE_API_KEY` in the worker's environment is the fallback.\n\n```sql\nCREATE SECRET (TYPE typesafe, api_key '...');\n```",
+        "vgi.example_queries": "[{\"description\": \"Classify every row of a table via LATERAL\", \"sql\": \"SELECT t.body, c.choice, c.confidence FROM (VALUES ('My package never arrived'), ('I was charged twice')) t(body), LATERAL typesafe.main.choice(t.body, instructions => 'Which team should handle this?', criteria => MAP {'shipping': 'Delivery status, delays, lost packages', 'billing': 'Charges, invoices, payment problems'}) c\"}, {\"description\": \"Classify a single literal\", \"sql\": \"SELECT choice, confidence FROM typesafe.main.choice('I was charged twice', instructions => 'Which team should handle this?', criteria => MAP {'shipping': 'Delivery status, delays, lost packages', 'billing': 'Charges, invoices, payment problems'})\"}]",
+        "vgi.result_columns_schema": "[{\"name\": \"choice\", \"type\": \"VARCHAR\", \"description\": \"The highest-probability option; NULL when the input state was NULL.\"}, {\"name\": \"confidence\", \"type\": \"DOUBLE\", \"description\": \"0-1 score of how concentrated the probability distribution is.\"}, {\"name\": \"probabilities\", \"type\": \"MAP(VARCHAR, DOUBLE)\", \"description\": \"Probability of every option, in the order the criteria listed them; sums to 1.\"}, {\"name\": \"model\", \"type\": \"VARCHAR\", \"description\": \"The model that answered, as reported by the API.\"}, {\"name\": \"input_tokens\", \"type\": \"BIGINT\", \"description\": \"Input tokens billed for this row's request.\"}, {\"name\": \"output_tokens\", \"type\": \"BIGINT\", \"description\": \"Output tokens billed for this row's request.\"}]"
+      },
+      null,
+      [
+        "state",
+        "model",
+        "instructions",
+        "criteria",
+        "concurrency"
+      ],
+      [
+        "VARCHAR",
+        "VARCHAR",
+        "VARCHAR",
+        "MAP(VARCHAR, VARCHAR)",
+        "BIGINT"
+      ],
+      null,
+      null,
+      null,
+      true,
+      null,
+      22731,
+      [
+        "SELECT t.body, c.choice, c.confidence FROM (VALUES ('My package never arrived'), ('I was charged twice')) t(body), LATERAL typesafe.main.choice(t.body, instructions => 'Which team should handle this?', criteria => MAP {'shipping': 'Delivery status, delays, lost packages', 'billing': 'Charges, invoices, payment problems'}) c",
+        "SELECT choice, confidence FROM typesafe.main.choice('I was charged twice', instructions => 'Which team should handle this?', criteria => MAP {'shipping': 'Delivery status, delays, lost packages', 'billing': 'Charges, invoices, payment problems'})"
+      ],
+      null,
+      [
+        "classification",
+        "blended"
+      ]
+    ],
+    [
+      "typesafe",
+      "22592",
+      "main",
+      "models",
+      null,
+      "table",
+      "List the TypeSafe models that the question functions accept in their `model =>` argument",
+      null,
+      {
+        "vgi.category": "reference",
+        "vgi.doc_llm": "The list of TypeSafe models, one row each. Read it before setting `model =>` on any question function: they default to `jev-latest`, and this is the only place in SQL that says what else is accepted \u2014 a preview model is usually published alongside the stable one. Takes no arguments and costs no tokens, so it is safe to call for discovery. A `name` from here goes straight into `model =>`. Needs a `typesafe` secret.",
+        "vgi.doc_md": "Every model the API will accept, as rows.\n\n### Why it is here\n\nEvery question function takes a `model =>` argument that defaults to `jev-latest`. Nothing else in this catalog enumerates the alternatives, and TypeSafe publishes a preview line (`jev-preview`) next to the stable one.\n\n### Using a name you find here\n\n`model =>` is a bind-time argument, so it takes a literal: paste the `name` into the call rather than joining this function's column into it. A correlated `LATERAL ... model => m.name` is rejected by the binder.\n\n### Cost and freshness\n\nThis is a `GET`: it judges nothing and bills no tokens. Results are advertised as cacheable for five minutes, so repeated calls in one session cost one request.\n\n### Errors\n\nA rejected key or an unreachable endpoint raises, exactly as for the question functions \u2014 an empty listing would read as 'this account has no models'.\n\n### Authentication\n\nThe same `typesafe` secret the question functions use.\n\n```sql\nCREATE SECRET (TYPE typesafe, api_key '...');\n```",
+        "vgi.example_queries": "[{\"description\": \"List every model with what it is and when it shipped\", \"sql\": \"SELECT name, description, release_date FROM typesafe.main.models() ORDER BY name\"}, {\"description\": \"Find the most recently published model\", \"sql\": \"SELECT name, release_date FROM typesafe.main.models() ORDER BY release_date DESC LIMIT 1\"}]",
+        "vgi.result_columns_schema": "[{\"name\": \"name\", \"type\": \"VARCHAR\", \"description\": \"The model id, exactly as the question functions want it in `model =>`.\"}, {\"name\": \"description\", \"type\": \"VARCHAR\", \"description\": \"TypeSafe's own description of what the model is.\"}, {\"name\": \"release_date\", \"type\": \"TIMESTAMP WITH TIME ZONE\", \"description\": \"When TypeSafe published this model; NULL when the API did not say.\"}]"
+      },
+      null,
+      [],
+      [],
+      null,
+      null,
+      null,
+      true,
+      null,
+      22732,
+      [
+        "SELECT name, description, release_date FROM typesafe.main.models() ORDER BY name",
+        "SELECT name, release_date FROM typesafe.main.models() ORDER BY release_date DESC LIMIT 1"
+      ],
+      null,
+      [
+        "reference"
+      ]
+    ],
+    [
+      "typesafe",
+      "22592",
+      "main",
+      "noul",
+      null,
+      "table",
+      "Answer a yes/no question about each row as a calibrated probability, not a verdict",
+      null,
+      {
+        "vgi.category": "classification",
+        "vgi.doc_llm": "Ask one yes/no question about each row using TypeSafe's System One model, and get the probability that the answer is yes rather than a bare boolean. Pass the text as the positional argument \u2014 a literal, or a column under LATERAL to judge a whole table \u2014 and the question as the named `instructions` argument. Returns a `DOUBLE` between 0 and 1 per row: near 1 is yes, near 0 is no, 0.5 means the model genuinely cannot tell. Compare it against a threshold you choose, which is the point of getting a probability instead of a verdict. Optional `criteria` describes what a yes and a no look like. A noul answer has no separate confidence, because the number is already the whole answer. Use `is_true()` when you want the same number as a plain expression, and `ask()` when the row needs more than one question. Needs a `typesafe` secret.",
+        "vgi.doc_md": "One TypeSafe yes/no question, asked of every input row.\n\n### Arguments\n\n- `state` (positional): the content to evaluate. A literal, or a column.\n- `instructions =>`: the question, phrased so that yes and no both make sense.\n- `criteria =>`: optional. A `MAP` with a `'true'` entry describing what a yes looks like and a `'false'` entry describing what a no looks like. Either may be given on its own, and no other key is accepted \u2014 a noul has exactly two outcomes, so this is a rubric rather than a set of things to choose between.\n- `model =>`: defaults to `jev-latest`.\n- `concurrency =>`: in-flight requests per batch (default 8).\n\n### Reading the answer\n\n`noul` is a probability, not a verdict: near 1 is yes, near 0 is no, and 0.5 is the model saying the content does not decide the question. That is why there is no `confidence` column here as there is on `choice()` and `score()` \u2014 a one-number answer carries its own certainty, and 0.5 is exactly what low confidence looks like. Pick the threshold that suits the cost of being wrong, and keep the rows near 0.5 for a human.\n\n### Row semantics\n\nStrictly one output row per input row. A NULL state yields a row of NULLs and makes no request. Identical states within a batch are asked once.\n\n### Errors\n\nAn API failure raises \u2014 it never degrades to NULL, which would be indistinguishable from a NULL input. 429 and 529 are retried with backoff first.\n\n### Authentication\n\nAdd `base_url` to the secret to target the bundled mock endpoint. `TYPESAFE_API_KEY` in the worker's environment is the fallback.\n\n```sql\nCREATE SECRET (TYPE typesafe, api_key '...');\n```",
+        "vgi.example_queries": "[{\"description\": \"Flag every row of a table via LATERAL\", \"sql\": \"SELECT t.body, n.noul FROM (VALUES ('My package never arrived'), ('Thanks for the quick refund')) t(body), LATERAL typesafe.main.noul(t.body, instructions => 'Is this message about a lost package?') n\"}, {\"description\": \"Describe both outcomes with criteria\", \"sql\": \"SELECT noul FROM typesafe.main.noul('My package never arrived and nobody has replied', instructions => 'Does this need a reply today?', criteria => MAP {'true': 'angry, waiting for days, money at stake', 'false': 'a routine question that can wait'})\"}]",
+        "vgi.result_columns_schema": "[{\"name\": \"noul\", \"type\": \"DOUBLE\", \"description\": \"Probability between 0 and 1 that the answer is yes; near 1 is yes, near 0 is no, 0.5 is genuinely undecided. NULL when the input state was NULL.\"}, {\"name\": \"model\", \"type\": \"VARCHAR\", \"description\": \"The model that answered, as reported by the API.\"}, {\"name\": \"input_tokens\", \"type\": \"BIGINT\", \"description\": \"Input tokens billed for this row's request.\"}, {\"name\": \"output_tokens\", \"type\": \"BIGINT\", \"description\": \"Output tokens billed for this row's request.\"}]"
+      },
+      null,
+      [
+        "state",
+        "model",
+        "instructions",
+        "criteria",
+        "concurrency"
+      ],
+      [
+        "VARCHAR",
+        "VARCHAR",
+        "VARCHAR",
+        "MAP(VARCHAR, VARCHAR)",
+        "BIGINT"
+      ],
+      null,
+      null,
+      null,
+      true,
+      null,
+      22733,
+      [
+        "SELECT t.body, n.noul FROM (VALUES ('My package never arrived'), ('Thanks for the quick refund')) t(body), LATERAL typesafe.main.noul(t.body, instructions => 'Is this message about a lost package?') n",
+        "SELECT noul FROM typesafe.main.noul('My package never arrived and nobody has replied', instructions => 'Does this need a reply today?', criteria => MAP {'true': 'angry, waiting for days, money at stake', 'false': 'a routine question that can wait'})"
+      ],
+      null,
+      [
+        "classification",
+        "blended"
+      ]
+    ],
+    [
+      "typesafe",
+      "22592",
+      "main",
+      "score",
+      null,
+      "table",
+      "Place each row on an ordered scale you describe, as a probability-weighted position",
+      null,
+      {
+        "vgi.category": "classification",
+        "vgi.doc_llm": "Rate each row on an ordered scale using TypeSafe's System One model. Pass the text as the positional argument \u2014 a literal, or a column under LATERAL to rate a whole table \u2014 and describe the scale once with the named `instructions` and `criteria` arguments, where `criteria` is an ordered list of level descriptions with the lowest first. Returns one row per input row: `score`, the probability-weighted position on that scale where 0 is the first level; a 0-1 `confidence`; and the full distribution as a `MAP` keyed by level number. Because the score is weighted rather than rounded, a row the model reads as between two levels lands between them, which is what makes the column sortable. Reach for `choice()` instead when the options have no order, and `ask()` when one row needs several questions. Needs a `typesafe` secret.",
+        "vgi.doc_md": "One TypeSafe score question, asked of every input row.\n\n### Arguments\n\n- `state` (positional): the content to evaluate. A literal, or a column.\n- `instructions =>`: the question, e.g. `'How severe is this?'`.\n- `criteria =>`: the scale, as an ordered list of level descriptions with the lowest first. A scale needs at least two rungs, and the API caps it at ten. A level may be a plain description or a fuller rubric; what matters is that neighbouring rungs are told apart by something the content can actually show.\n- `model =>`: defaults to `jev-latest`.\n- `concurrency =>`: in-flight requests per batch (default 8).\n\n### Reading the answer\n\n`score` is a position, not a level: the probability-weighted average of the level numbers, so a row the model reads as halfway between the first and second rung scores 0.5. Round it to snap to a rung, or leave it alone to rank rows against each other. `probabilities` is keyed by level number rather than by the level's text, so the key stays meaningful when two levels read similarly. `confidence` says how concentrated that distribution was \u2014 a row spread evenly across the whole scale lands mid-scale with a low confidence, which is a different fact from a row the model is sure belongs in the middle.\n\n### Row semantics\n\nStrictly one output row per input row. A NULL state yields a row of NULLs and makes no request. Identical states within a batch are asked once.\n\n### Errors\n\nAn API failure raises \u2014 it never degrades to NULL, which would be indistinguishable from a NULL input. 429 and 529 are retried with backoff first.\n\n### Authentication\n\nAdd `base_url` to the secret to target the bundled mock endpoint. `TYPESAFE_API_KEY` in the worker's environment is the fallback.\n\n```sql\nCREATE SECRET (TYPE typesafe, api_key '...');\n```",
+        "vgi.example_queries": "[{\"description\": \"Rate every row of a table via LATERAL\", \"sql\": \"SELECT t.body, s.score, s.confidence FROM (VALUES ('A quick question about my invoice'), ('The whole site is down')) t(body), LATERAL typesafe.main.score(t.body, instructions => 'How severe is this?', criteria => ['minor question', 'disruptive delay', 'critical outage']) s\"}, {\"description\": \"Rate a single literal and keep the whole distribution\", \"sql\": \"SELECT score, probabilities FROM typesafe.main.score('The whole site is down', instructions => 'How severe is this?', criteria => ['minor question', 'disruptive delay', 'critical outage'])\"}]",
+        "vgi.result_columns_schema": "[{\"name\": \"score\", \"type\": \"DOUBLE\", \"description\": \"Probability-weighted position on the scale: 0 is the first criterion, and the last level's number is the top. NULL when the input state was NULL.\"}, {\"name\": \"confidence\", \"type\": \"DOUBLE\", \"description\": \"0-1 score of how concentrated the probability distribution is.\"}, {\"name\": \"probabilities\", \"type\": \"MAP(INTEGER, DOUBLE)\", \"description\": \"Probability of every level, keyed by level number (0 is the first criterion); sums to 1.\"}, {\"name\": \"model\", \"type\": \"VARCHAR\", \"description\": \"The model that answered, as reported by the API.\"}, {\"name\": \"input_tokens\", \"type\": \"BIGINT\", \"description\": \"Input tokens billed for this row's request.\"}, {\"name\": \"output_tokens\", \"type\": \"BIGINT\", \"description\": \"Output tokens billed for this row's request.\"}]"
+      },
+      null,
+      [
+        "state",
+        "model",
+        "instructions",
+        "criteria",
+        "concurrency"
+      ],
+      [
+        "VARCHAR",
+        "VARCHAR",
+        "VARCHAR",
+        "VARCHAR[]",
+        "BIGINT"
+      ],
+      null,
+      null,
+      null,
+      true,
+      null,
+      22734,
+      [
+        "SELECT t.body, s.score, s.confidence FROM (VALUES ('A quick question about my invoice'), ('The whole site is down')) t(body), LATERAL typesafe.main.score(t.body, instructions => 'How severe is this?', criteria => ['minor question', 'disruptive delay', 'critical outage']) s",
+        "SELECT score, probabilities FROM typesafe.main.score('The whole site is down', instructions => 'How severe is this?', criteria => ['minor question', 'disruptive delay', 'critical outage'])"
+      ],
+      null,
+      [
+        "scoring",
+        "blended"
+      ]
+    ],
+    [
+      "typesafe",
+      "22592",
+      "main",
+      "ask",
+      null,
+      "table",
+      "Ask several TypeSafe questions (choice, noul, score) about each row in one request",
+      null,
+      {
+        "vgi.category": "classification",
+        "vgi.doc_llm": "Ask any number of TypeSafe questions about each row and get one typed `STRUCT` column per question, for the cost of a single API request per row. Three question types: `choice` picks one option (-> choice, confidence, probabilities), `noul` is a yes/no probability (-> noul, 0-1), `score` places the row on an ordered scale (-> score, confidence, probabilities by level). Pass the content as the positional argument \u2014 a string, a struct, or the whole row alias under LATERAL \u2014 and the questions as a struct keyed by the column name you want. Prefer this over several `choice()` calls.",
+        "vgi.doc_md": "Several questions about each row, answered in one request.\n\n### State (positional)\n\n- `VARCHAR` is sent as a string.\n- `STRUCT`, `LIST` and `MAP` are sent as the equivalent JSON object or array. The row alias itself works: `ask(t, ...)` sends every column of `t`.\n- A DuckDB `JSON` column is plain text to the worker; pass `parse_json => true` to send it structured.\n\nTypeSafe recommends an object for most requests: descriptive field names tell the model how the parts relate.\n\n### Questions (`questions =>`)\n\nA struct keyed by question name. Each value has `type`, `instructions`, and:\n\n- `choice` \u2014 `criteria`: struct or `MAP` of option -> description (1-255 options).\n- `score` \u2014 `criteria`: ordered list of 2-10 level descriptions, lowest first.\n- `noul` \u2014 optional `criteria` with `'true'` and/or `'false'` descriptions.\n\n`instructions` and every criterion may be a plain string or a structured object \u2014 TypeSafe accepts both, and a rubric (`{what, not_for, examples}` for a choice option, `{summary, signals}` for a score level) is what separates options a model keeps confusing. A JSON string or a `MAP` is accepted in place of the struct. Questions are validated at bind, before any row is sent.\n\n### Output\n\nOne `STRUCT` column per question, named after it:\n\n| Type | Fields |\n| --- | --- |\n| choice | `choice VARCHAR`, `confidence DOUBLE`, `probabilities MAP(VARCHAR, DOUBLE)` |\n| noul | `noul DOUBLE` \u2014 near 1 is yes, near 0 is no, 0.5 is genuinely undecided |\n| score | `score DOUBLE`, `confidence DOUBLE`, `probabilities MAP(INTEGER, DOUBLE)` keyed by level (0 = first) |\n\nthen `usage STRUCT(model, input_tokens, output_tokens)`. Strictly one output row per input row. A NULL state \u2014 or a struct/list with no non-null content \u2014 yields NULL answers and makes no request. Identical states in a batch are asked once. API errors raise \u2014 they never become NULL.",
+        "vgi.example_queries": "[{\"description\": \"Route, flag and grade every row of a table in one pass\", \"sql\": \"SELECT t.id, a.dept.choice AS dept, a.urgent.noul AS urgent, a.severity.score AS severity FROM (VALUES (1, 'My package is lost, this is unacceptable'), (2, 'Thanks, one invoice question')) t(id, body), LATERAL typesafe.main.ask(t, questions => {'dept': {'type': 'choice', 'instructions': 'Which team should handle this?', 'criteria': {'shipping': 'Delivery status, delays, lost packages', 'billing': 'Charges, invoices, payment problems'}}, 'urgent': {'type': 'noul', 'instructions': 'Is the customer angry?', 'criteria': {'true': 'angry, furious, unacceptable', 'false': 'calm, thanks'}}, 'severity': {'type': 'score', 'instructions': 'How bad is it?', 'criteria': ['minor question', 'disruptive delay', 'critical outage']}}) a ORDER BY t.id\"}, {\"description\": \"Ask several questions about a single literal\", \"sql\": \"SELECT dept.choice, urgent.noul FROM typesafe.main.ask('I was charged twice', questions => {'dept': {'type': 'choice', 'instructions': 'Which team should handle this?', 'criteria': {'shipping': 'Delivery status, delays, lost packages', 'billing': 'Charges, invoices, payment problems'}}, 'urgent': {'type': 'noul', 'instructions': 'Is the customer angry?', 'criteria': {'true': 'angry, furious, unacceptable', 'false': 'calm, thanks'}}, 'severity': {'type': 'score', 'instructions': 'How bad is it?', 'criteria': ['minor question', 'disruptive delay', 'critical outage']}})\"}]",
+        "vgi.result_dynamic_columns_md": "The result carries one column per entry in `questions`, named after that entry, followed by a `usage` column. A question column's type is decided by its `type` field, so there are three variants.\n\n### A `choice` question\n\n| Name | Type | Description |\n| --- | --- | --- |\n| &lt;question name&gt; | STRUCT(choice VARCHAR, confidence DOUBLE, probabilities MAP(VARCHAR, DOUBLE)) | The chosen option, how concentrated the distribution was, and every option's probability in criteria order. |\n\n### A `noul` question\n\n| Name | Type | Description |\n| --- | --- | --- |\n| &lt;question name&gt; | STRUCT(noul DOUBLE) | Probability between 0 and 1 that the answer is yes; 0.5 is genuinely undecided. |\n\n### A `score` question\n\n| Name | Type | Description |\n| --- | --- | --- |\n| &lt;question name&gt; | STRUCT(score DOUBLE, confidence DOUBLE, probabilities MAP(INTEGER, DOUBLE)) | Probability-weighted position on the scale, its confidence, and each level's probability keyed by level number (0 is the first criterion). |\n\n### Always present\n\n| Name | Type | Description |\n| --- | --- | --- |\n| usage | STRUCT(model VARCHAR, input_tokens BIGINT, output_tokens BIGINT) | The model that answered and the tokens billed for this row's request. |"
+      },
+      null,
+      [
+        "state",
+        "questions",
+        "parse_json",
+        "model",
+        "concurrency"
+      ],
+      [
+        "ANY",
+        "ANY",
+        "BOOLEAN",
+        "VARCHAR",
+        "BIGINT"
+      ],
+      null,
+      null,
+      null,
+      true,
+      null,
+      22729,
+      [
+        "SELECT t.id, a.dept.choice AS dept, a.urgent.noul AS urgent, a.severity.score AS severity FROM (VALUES (1, 'My package is lost, this is unacceptable'), (2, 'Thanks, one invoice question')) t(id, body), LATERAL typesafe.main.ask(t, questions => {'dept': {'type': 'choice', 'instructions': 'Which team should handle this?', 'criteria': {'shipping': 'Delivery status, delays, lost packages', 'billing': 'Charges, invoices, payment problems'}}, 'urgent': {'type': 'noul', 'instructions': 'Is the customer angry?', 'criteria': {'true': 'angry, furious, unacceptable', 'false': 'calm, thanks'}}, 'severity': {'type': 'score', 'instructions': 'How bad is it?', 'criteria': ['minor question', 'disruptive delay', 'critical outage']}}) a ORDER BY t.id",
+        "SELECT dept.choice, urgent.noul FROM typesafe.main.ask('I was charged twice', questions => {'dept': {'type': 'choice', 'instructions': 'Which team should handle this?', 'criteria': {'shipping': 'Delivery status, delays, lost packages', 'billing': 'Charges, invoices, payment problems'}}, 'urgent': {'type': 'noul', 'instructions': 'Is the customer angry?', 'criteria': {'true': 'angry, furious, unacceptable', 'false': 'calm, thanks'}}, 'severity': {'type': 'score', 'instructions': 'How bad is it?', 'criteria': ['minor question', 'disruptive delay', 'critical outage']}})"
+      ],
+      null,
+      [
+        "classification",
+        "scoring",
+        "blended"
+      ]
+    ],
+    [
+      "typesafe",
+      "22592",
+      "main",
+      "is_true",
+      null,
+      "scalar",
+      "Probability that a yes/no question is true of the given content, as a plain expression usable in WHERE, CASE and ORDER BY",
+      null,
+      {
+        "vgi.category": "classification",
+        "vgi.doc_llm": "Ask TypeSafe one yes/no question about a value and get back a single `DOUBLE`: the probability that the answer is yes, where near 1 is yes, near 0 is no and 0.5 is genuinely undecided. It is a scalar, so it goes wherever an expression goes \u2014 a `WHERE` predicate, a `CASE` arm, an `ORDER BY` key, the right-hand side of an `UPDATE`. Compare it against a threshold; it is a probability, not a boolean. One request per distinct non-null value, and a NULL costs nothing and answers NULL. Use `noul()` instead when you need `criteria`, a specific model, or the token usage, and `ask()` when one row needs several questions at once. Needs a `typesafe` secret.",
+        "vgi.doc_md": "One yes/no question, answered as a number you can put in an expression.\n\n### What it cannot do\n\nA scalar takes no named arguments in DuckDB, so this is the whole signature: the default model, no criteria, no usage columns, and a question that is constant for the whole query. `noul()` is the same judgment with all of those, in table-function form.\n\n### Reading the answer\n\nThe result is the probability that the answer is yes: near 1 is yes, near 0 is no, and 0.5 is the model saying the content does not decide the question. So it is compared against a threshold rather than used as a bare predicate \u2014 see this function's example queries for the shape. Pick the threshold to suit the cost of being wrong, and keep the rows near 0.5 for a human.\n\n### Why it exists\n\nA noul answer is one number, so a scalar loses nothing by returning just that, and the query stops needing a join to reach it. `noul()` can express the same filters and orderings through a `LATERAL` join or a scalar subquery \u2014 this is shorter, not more capable.\n\n### Cost and row semantics\n\nOne API request per distinct non-null value in each chunk, issued concurrently; repeated values are asked once. A NULL value answers NULL and makes no request. An API failure raises rather than becoming NULL, which would be indistinguishable from that NULL input. 429 and 529 are retried with backoff first.\n\n### Authentication\n\nAdd `base_url` to the secret to target the bundled mock endpoint. `TYPESAFE_API_KEY` in the worker's environment is the fallback.\n\n```sql\nCREATE SECRET (TYPE typesafe, api_key '...');\n```",
+        "vgi.example_queries": "[{\"description\": \"Keep only the rows a yes/no question is true of\", \"sql\": \"SELECT t.body FROM (VALUES ('My package never arrived'), ('Thanks for the quick refund')) t(body) WHERE typesafe.main.is_true(t.body, 'Is this message about a lost package?') > 0.5\"}, {\"description\": \"Ask about one literal\", \"sql\": \"SELECT typesafe.main.is_true('My package never arrived', 'Is this message about a lost package?') AS lost_package\"}]"
+      },
+      "DOUBLE",
+      [
+        "state",
+        "instructions"
+      ],
+      [
+        "VARCHAR",
+        "VARCHAR"
+      ],
+      null,
+      null,
+      false,
+      true,
+      null,
+      22728,
+      [
+        "SELECT t.body FROM (VALUES ('My package never arrived'), ('Thanks for the quick refund')) t(body) WHERE typesafe.main.is_true(t.body, 'Is this message about a lost package?') > 0.5",
+        "SELECT typesafe.main.is_true('My package never arrived', 'Is this message about a lost package?') AS lost_package"
+      ],
+      "CONSISTENT",
+      [
+        "classification",
+        "scalar"
+      ]
+    ]
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "query": "SELECT * FROM duckdb_tables() WHERE database_name='typesafe'",
+  "columns": [
+    "database_name",
+    "database_oid",
+    "schema_name",
+    "schema_oid",
+    "table_name",
+    "table_oid",
+    "comment",
+    "tags",
+    "internal",
+    "temporary",
+    "has_primary_key",
+    "estimated_size",
+    "column_count",
+    "index_count",
+    "check_constraint_count",
+    "sql"
+  ],
+  "rows": [
+    [
+      "typesafe",
+      22592,
+      "main",
+      22595,
+      "models",
+      22794,
+      "The TypeSafe models a question may name (small, slow-changing reference data)",
+      {
+        "domain": "ai-classification",
+        "provider": "typesafe",
+        "vgi.category": "reference",
+        "vgi.doc_llm": "Every TypeSafe model this key may name, as a plain table \u2014 the same rows `models()` returns, without the parentheses. Read it before setting `model =>` on any question function: they default to `jev-latest`, and this is the only place in SQL that says what else is accepted. Scanning it calls the API but bills no tokens.",
+        "vgi.doc_md": "The model catalog, readable as a table.\n\nThis table and the `models()` function are the same scan, returning the same rows. The table form exists because a listing that takes no arguments reads better without parentheses \u2014 see this table's example queries for the exact statement.\n\n### Using a name you find here\n\n`model =>` is a bind-time argument on every question function, so it takes a literal: paste the `name` into the call rather than joining this table into it.\n\n### Cost and freshness\n\nA `GET` that judges nothing and bills no tokens. Advertised as cacheable for five minutes, so repeated scans in one session cost one request.",
+        "vgi.example_queries": "[{\"description\": \"List every model without parentheses\", \"sql\": \"SELECT name, description, release_date FROM typesafe.main.models ORDER BY name\"}, {\"description\": \"Which models are previews rather than the stable line\", \"sql\": \"SELECT name, release_date FROM typesafe.main.models WHERE name LIKE '%preview%' ORDER BY name\"}]",
+        "vgi.keywords": "[\"models\", \"model\", \"jev\", \"jev-latest\", \"jev-preview\", \"versions\", \"discovery\"]"
+      },
+      false,
+      false,
+      true,
+      0,
+      3,
+      1,
+      0,
+      "CREATE TABLE models(\"name\" VARCHAR, description VARCHAR NOT NULL, release_date TIMESTAMP WITH TIME ZONE, PRIMARY KEY(\"name\"));"
+    ]
+  ]
+}
