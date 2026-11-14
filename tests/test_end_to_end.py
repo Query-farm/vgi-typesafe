@@ -57,7 +57,7 @@ def _run(mock: MockTypeSafeServer, sql: str, *, api_key: str | None = "test-key"
     )
     env = {k: v for k, v in os.environ.items() if not k.startswith("TYPESAFE_")}
     return subprocess.run(
-        [str(HAYBARN), "-unsigned"],
+        [str(HAYBARN), "-unsigned", "-no-agent"],
         input=script,
         capture_output=True,
         text=True,
@@ -536,6 +536,44 @@ def test_is_true_agrees_with_the_table_function_on_the_same_row(mock: MockTypeSa
         """,
     )
     assert rows[0]["scalar"] == rows[0]["table_function"]
+
+
+_REFUND = "typesafe.main.is_true(t.body, 'Is the customer asking for a refund?')"
+_ROUTED_MESSAGES = (
+    "FROM (VALUES ('I was charged twice, please refund me'), ('My invoice shows a wrong charge'), "
+    f"('My package never arrived')) t(body), LATERAL typesafe.main.choice(t.body, {QUESTION}) c"
+)
+
+
+def test_is_true_composes_with_a_lateral_question_when_projected(mock: MockTypeSafeServer) -> None:
+    """The scalar beside a LATERAL table function works in the select list, then filtered outside.
+
+    This is the shape the published composed example uses, because the shorter
+    spelling (the next test) fails in the extension.
+    """
+    rows = _rows(
+        mock,
+        f"WITH routed AS (SELECT t.body, c.choice, {_REFUND} AS refund {_ROUTED_MESSAGES}) "
+        "SELECT body FROM routed WHERE choice = 'billing' AND refund > 0.5 ORDER BY body;",
+    )
+    assert rows == [{"body": "I was charged twice, please refund me"}]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "vgi extension bug: a scalar's constant arguments are erased at bind, so when DuckDB "
+        "copies the plan (decorrelating the LATERAL) it cannot re-find is_true(VARCHAR). "
+        "Remove this marker when the extension is fixed."
+    ),
+)
+def test_is_true_in_a_where_clause_beside_a_lateral_question(mock: MockTypeSafeServer) -> None:
+    """The natural spelling: filter with the scalar in the same WHERE as a LATERAL table function."""
+    rows = _rows(
+        mock,
+        f"SELECT t.body {_ROUTED_MESSAGES} WHERE c.choice = 'billing' AND {_REFUND} > 0.5 ORDER BY t.body;",
+    )
+    assert rows == [{"body": "I was charged twice, please refund me"}]
 
 
 def test_is_true_rejects_a_blank_question_at_bind(mock: MockTypeSafeServer) -> None:

@@ -101,6 +101,29 @@ SELECT * FROM routed WHERE confidence >= 0.8;   -- auto-route these
 SELECT * FROM routed WHERE confidence <  0.8;   -- queue these for review
 ```
 
+### Let the routing decide what to ask next
+
+The functions chain: route first, then ask a follow-up only of the rows it applies
+to. Here only the messages confidently routed to shipping are rated, so the other
+teams' rows never cost a second request:
+
+```sql
+WITH routed AS (
+    SELECT t.id, t.body, c.choice AS team, c.confidence
+    FROM tickets t,
+         LATERAL typesafe.main.choice(t.body,
+             instructions => 'Which team should handle this?',
+             criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+                              'billing':  'Charges, invoices, payment problems'}) c)
+SELECT r.id, r.body, s.score AS how_bad    -- 0..2 on the scale below
+FROM routed r,
+     LATERAL typesafe.main.score(r.body,
+         instructions => 'How bad is this delivery problem?',
+         criteria => ['short delay', 'long delay', 'lost package']) s
+WHERE r.team = 'shipping' AND r.confidence >= 0.8
+ORDER BY s.score DESC;
+```
+
 ### Ask several things at once
 
 Each row is one API request no matter how many questions it carries, so asking three

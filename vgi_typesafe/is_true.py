@@ -52,6 +52,7 @@ from vgi.scalar_function import BindParameters, BindResult, ScalarFunction
 
 from vgi_typesafe import auth
 from vgi_typesafe import typesafe_api as api
+from vgi_typesafe.composed import ROUTE_THEN_ASK_IS_TRUE
 from vgi_typesafe.meta import docs, examples
 
 #: The name this function gives its single question in each request.
@@ -186,11 +187,13 @@ class IsTrueFunction(ScalarFunction):
             example_queries=examples(
                 ("Keep only the rows a yes/no question is true of", _WHERE_EXAMPLE),
                 ("Ask about one literal", _SELECT_EXAMPLE),
+                ROUTE_THEN_ASK_IS_TRUE,
             ),
         )
         examples = [
             FunctionExample(sql=_WHERE_EXAMPLE, description="Keep only the rows a yes/no question is true of"),
             FunctionExample(sql=_SELECT_EXAMPLE, description="Ask about one literal"),
+            FunctionExample(sql=ROUTE_THEN_ASK_IS_TRUE[1], description=ROUTE_THEN_ASK_IS_TRUE[0]),
         ]
 
     @classmethod

@@ -55,6 +55,7 @@ from vgi_rpc.rpc import OutputCollector
 
 from vgi_typesafe import ask, auth
 from vgi_typesafe import typesafe_api as api
+from vgi_typesafe.composed import ROUTE_THEN_FOLLOW_UP
 from vgi_typesafe.meta import docs, examples, field
 
 #: The name every error message from this module is prefixed with.
@@ -276,11 +277,13 @@ class AskDynamicFunction(RowTransformFunction[AskDynamicArgs]):
             example_queries=examples(
                 ("Ask each row the questions that row carries", _ROW_EXAMPLE),
                 ("Pull one answer out of the JSON", _LITERAL_EXAMPLE),
+                ROUTE_THEN_FOLLOW_UP,
             ),
         )
         examples = [
             FunctionExample(sql=_ROW_EXAMPLE, description="Ask each row the questions that row carries"),
             FunctionExample(sql=_LITERAL_EXAMPLE, description="Pull one answer out of the JSON"),
+            FunctionExample(sql=ROUTE_THEN_FOLLOW_UP[1], description=ROUTE_THEN_FOLLOW_UP[0]),
         ]
 
     @classmethod

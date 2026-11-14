@@ -54,6 +54,7 @@ from vgi_typesafe import __version__, auth
 from vgi_typesafe.ask import AskFunction
 from vgi_typesafe.ask_dynamic import AskDynamicFunction
 from vgi_typesafe.choice import ChoiceFunction
+from vgi_typesafe.composed import ROUTE_THEN_ASK_IS_TRUE, ROUTE_THEN_FOLLOW_UP, ROUTE_THEN_RATE
 from vgi_typesafe.is_true import IsTrueFunction
 from vgi_typesafe.meta import column_comments, docs, examples, keywords
 from vgi_typesafe.models import MODELS_SCHEMA, ModelsFunction
@@ -179,6 +180,18 @@ _AGENT_TEST_TASKS = json.dumps(
                 "From these two messages — 'My package never arrived' and 'Thanks for the quick "
                 "refund' — keep only the ones about a lost package. I want the AI judgment inline "
                 "in the WHERE clause, not joined in as a separate table."
+            ),
+        },
+        {
+            "name": "count_refund_requests_per_team",
+            "prompt": (
+                "Route these five messages to the shipping team (delivery status, delays, lost "
+                "packages) or the billing team (charges, invoices, payment problems): 'I was "
+                "charged twice, please refund me', 'My invoice shows a wrong charge', 'Please "
+                "refund the duplicate charge on my invoice', 'My package never arrived and I want "
+                "a refund' and 'My package never arrived'. Then tell me, per team, how many of "
+                "its messages are more likely than not asking for a refund. Return one row per "
+                "team with two columns: team (VARCHAR) and refund_requests (BIGINT)."
             ),
         },
         {
@@ -327,6 +340,9 @@ _SCHEMA_TAGS = {
             "List the models a question may name",
             "SELECT name, description, release_date FROM typesafe.main.models() ORDER BY name",
         ),
+        ROUTE_THEN_RATE,
+        ROUTE_THEN_ASK_IS_TRUE,
+        ROUTE_THEN_FOLLOW_UP,
     ),
     "vgi.doc_llm": (
         "Turn a row into a typed judgment with a calibrated confidence, instead of into prose. "

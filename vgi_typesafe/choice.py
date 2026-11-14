@@ -47,6 +47,7 @@ from vgi_rpc.rpc import OutputCollector
 
 from vgi_typesafe import auth
 from vgi_typesafe import typesafe_api as api
+from vgi_typesafe.composed import ROUTE_THEN_RATE
 from vgi_typesafe.meta import docs, examples, field
 
 CHOICE_SCHEMA = pa.schema(
@@ -195,11 +196,13 @@ class ChoiceFunction(RowTransformFunction[ChoiceArgs]):
             example_queries=examples(
                 ("Classify every row of a table via LATERAL", _LATERAL_EXAMPLE),
                 ("Classify a single literal", _LITERAL_EXAMPLE),
+                ROUTE_THEN_RATE,
             ),
         )
         examples = [
             FunctionExample(sql=_LATERAL_EXAMPLE, description="Classify every row of a table via LATERAL"),
             FunctionExample(sql=_LITERAL_EXAMPLE, description="Classify a single literal"),
+            FunctionExample(sql=ROUTE_THEN_RATE[1], description=ROUTE_THEN_RATE[0]),
         ]
 
     @classmethod

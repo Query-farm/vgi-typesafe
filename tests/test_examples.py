@@ -125,7 +125,7 @@ def _run(mock: MockTypeSafeServer, sql: str) -> subprocess.CompletedProcess[str]
         ".output\n.mode json\n" + sql.rstrip().rstrip(";") + ";\n"
     )
     return subprocess.run(
-        [str(HAYBARN), "-unsigned"], input=script, capture_output=True, text=True, timeout=180, cwd=PROJECT
+        [str(HAYBARN), "-unsigned", "-no-agent"], input=script, capture_output=True, text=True, timeout=180, cwd=PROJECT
     )
 
 

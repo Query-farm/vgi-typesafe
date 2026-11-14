@@ -131,6 +131,25 @@ tasks:
       any reasonable value counts.
     unordered: true
 
+  - name: count_refund_requests_per_team
+    reference_sql: >-
+      SELECT c.choice AS team,
+      count_if(typesafe.main.is_true(t.body, 'Is the customer asking for a refund?') > 0.5)
+      AS refund_requests
+      FROM (VALUES ('I was charged twice, please refund me'), ('My invoice shows a wrong charge'),
+      ('Please refund the duplicate charge on my invoice'),
+      ('My package never arrived and I want a refund'), ('My package never arrived')) t(body),
+      LATERAL typesafe.main.choice(t.body, instructions => 'Which team should handle this?',
+      criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+      'billing': 'Charges, invoices, payment problems'}) c
+      GROUP BY c.choice ORDER BY team
+    success_criteria: >-
+      Routes every message with a choice question, asks a yes/no refund question of each
+      message (typesafe.main.is_true, typesafe.main.noul, or a noul inside the same
+      typesafe.main.ask call), and counts the refund requests per routed team with a cut-off of
+      0.5 — billing 2, shipping 1.
+    unordered: true
+
   - name: which_models_can_i_ask_for
     reference_sql: >-
       SELECT name, description, release_date FROM typesafe.main.models() ORDER BY name

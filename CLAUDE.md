@@ -26,6 +26,7 @@ vgi_typesafe/
   ask_dynamic.py          ask_dynamic() — questions as a per-row column, answers as JSON
   choice.py noul.py score.py    one-question shorthands, flat columns
   is_true.py              the scalar form of a noul
+  composed.py             example queries that chain two functions (routing, then a follow-up)
   models.py               models(), registered as both a function and a table
   typesafe_api.py         the ONLY module that speaks HTTP
   auth.py                 secret + environment resolution for the API key
@@ -86,6 +87,13 @@ vgi_typesafe/
 9. **The mock's listen backlog.** `ThreadingHTTPServer` defaults to 5; a multi-worker
    `LATERAL` burst dropped SYNs and surfaced as connect timeouts that looked like a
    worker bug. It sets `request_queue_size = 256`.
+10. **`is_true()` cannot sit in a `WHERE` beside a `LATERAL` table function.** The vgi
+    extension erases a scalar's constant arguments at bind; when DuckDB copies the
+    plan to decorrelate the `LATERAL`, it looks up `is_true(VARCHAR)` and fails with
+    `Serialization Error: Failed to find function`. Project it in a CTE and filter
+    outside, as `composed.py`'s example does. Pinned by a strict xfail in
+    `test_end_to_end.py`; an extension bug, not fixable here.
+
 ## Testing
 
 ```sh
