@@ -1,0 +1,9 @@
+{
+  "kind": "Synthetic keyword-overlap mock, not a model or real API response",
+  "source_revision": "c1a121445d9593fae027dccc90ae0ec6ae79ec49",
+  "source_path": "vgi_typesafe/mock_server.py",
+  "sha256": {
+    "typesafe_mock.py": "9417cbb8861eccb9295769eb5022744eaaf539a27c22c3cd378dd42aa0d3ba36",
+    "LICENSE": "f8adc20c9df93e99cf89944de830cce377e86c7aafa74365d38107778540fd63"
+  }
+}

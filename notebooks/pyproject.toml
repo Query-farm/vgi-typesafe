@@ -1,0 +1,17 @@
+[project]
+name = "vgi-typesafe-notebooks"
+version = "0.1.0"
+description = "SQL-first, executable examples for vgi-typesafe"
+requires-python = ">=3.13,<3.15"
+dependencies = [
+    "haybarn==2.0.0rc11",
+    "ipykernel>=6.30,<8",
+    "jupysql>=0.11,<0.12",
+    "matplotlib>=3.10,<4",
+    "nbclient>=0.10,<0.11",
+    "nbformat>=5.10,<6",
+    "numpy>=2.2,<3",
+    "pandas>=2.2,<3",
+    "seaborn>=0.13.2,<0.14",
+    "toml>=0.10,<0.11",
+]

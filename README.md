@@ -527,3 +527,8 @@ follow the reference, and record both here so the gap stays a decision rather th
 
 MIT — see [LICENSE](LICENSE). Worker © 2026 Query Farm LLC. Judgments are produced by TypeSafe's
 System One models and are subject to TypeSafe's terms of use.
+
+## Executable notebook
+
+See [the SQL notebook](notebooks/README.md) for typed answers, confidence routing,
+charts and an isolated local fixture with a portable worker connection.

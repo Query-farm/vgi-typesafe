@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 336 64" role="img" aria-label="Query.Farm">
+  <title>Query.Farm — adapts to light/dark automatically</title>
+  <style>
+    .qf-word { fill: #211a12; }
+    .qf-dot  { fill: #7d5714; }
+    @media (prefers-color-scheme: dark) {
+      .qf-word { fill: #f4ece0; }
+      .qf-dot  { fill: #d9a441; }
+    }
+  </style>
+  <defs><clipPath id="qf-disc-wa"><circle cx="32" cy="32" r="32"/></clipPath></defs>
+  <g clip-path="url(#qf-disc-wa)">
+    <rect x="0" y="0"  width="64" height="16" fill="#F0C877"/>
+    <rect x="0" y="16" width="64" height="16" fill="#D9A441"/>
+    <rect x="0" y="32" width="64" height="16" fill="#A9762E"/>
+    <rect x="0" y="48" width="64" height="16" fill="#7A5230"/>
+  </g>
+  <text x="80" y="45" font-family="Petrona, Georgia, serif" font-weight="700" font-size="42" letter-spacing="-0.7" class="qf-word">Query<tspan class="qf-dot">.</tspan>Farm</text>
+</svg>
