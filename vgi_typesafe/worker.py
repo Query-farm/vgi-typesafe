@@ -300,7 +300,13 @@ _CATALOG_TAGS = {
         "One API request per distinct piece of work in an input batch — a state together with the "
         "questions asked of it — however many questions that is, so asking five things about a row "
         "costs the same as asking one. Requests within a batch run concurrently; rate-limit and "
-        "overload responses are retried with backoff."
+        "overload responses are retried with backoff.\n\n"
+        "### Sources and references\n\n"
+        "- [TypeSafe](https://typesafe.ai) — the service that produces the judgments.\n"
+        "- [TypeSafe documentation](https://docs.typesafe.ai/introduction) and the "
+        "[System One model](https://docs.typesafe.ai/concepts/system-one) the questions run on.\n"
+        "- [Quickstart](https://docs.typesafe.ai/introduction/quickstart) — how to create the API "
+        "key the `typesafe` secret holds."
     ),
 }
 
