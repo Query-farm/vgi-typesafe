@@ -13,12 +13,32 @@ permissions:
   contents: read
 
 jobs:
+  ci-status:
+    # A release tag usually points at a commit whose push to main already passed CI.
+    # Reuse that result instead of running the whole CI matrix again; otherwise run CI below.
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      passed: ${{ steps.check.outputs.passed }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&status=success&per_page=1" --jq .total_count || echo 0)
+          echo "ci.yml successes for ${GITHUB_SHA}: ${n:-0}"
+          if [ "${n:-0}" -gt 0 ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
+
   ci:
+    needs: [ci-status]
+    if: ${{ needs.ci-status.outputs.passed != 'true' }}
     uses: ./.github/workflows/ci.yml
 
   build:
     name: Build + attach distributions
-    needs: [ci]
+    needs: [ci-status, ci]
+    if: ${{ !cancelled() && needs.ci-status.result == 'success' && (needs.ci.result == 'success' || needs.ci.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write # attach assets to the Release
