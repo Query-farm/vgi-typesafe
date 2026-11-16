@@ -2,4 +2,4 @@
 
 """VGI worker exposing TypeSafe System One choice questions to DuckDB/SQL."""
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"

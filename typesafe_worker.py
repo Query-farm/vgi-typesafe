@@ -4,7 +4,7 @@
 # requires-python = ">=3.14"
 # dependencies = [
 #     "vgi-python[http]>=0.52.2,<0.53",
-#     "vgi-rpc>=0.46.0",
+#     "vgi-rpc>=0.53.1",
 #     "httpx>=0.27",
 # ]
 # ///
