@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.13%2B-blue.svg" alt="Python 3.13+">
+  <img src="https://img.shields.io/badge/python-3.14%2B-blue.svg" alt="Python 3.14+">
   <a href="https://duckdb.org"><img src="https://img.shields.io/badge/DuckDB-extension-fff000.svg?logo=duckdb&logoColor=black" alt="DuckDB"></a>
   <a href="https://query.farm/vgi/"><img src="https://img.shields.io/badge/VGI-Vector%20Gateway%20Interface-2f7d32.svg" alt="VGI"></a>
   <a href="https://pypi.org/project/vgi-python/"><img src="https://img.shields.io/badge/vgi--python-%E2%89%A50.51.0-2f7d32.svg" alt="vgi-python >= 0.51.0"></a>

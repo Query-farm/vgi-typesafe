@@ -46,7 +46,7 @@ vgi_typesafe/
 - **Validate at bind.** A malformed question should fail when the query is planned,
   before a single row is billed. The exception is `ask_dynamic()`, where questions
   are per-row and validation necessarily moves to `process()`.
-- Python ≥ 3.13, `from __future__ import annotations`, Google docstrings.
+- Python ≥ 3.14, `from __future__ import annotations`, Google docstrings.
 - Copyright header on every module: `# Copyright 2026 Query Farm LLC - https://query.farm`.
 - Ruff/mypy/pydoclint settings are mirrored from vgi-python so the fleet lints
   identically. Docstring rules apply to **tests too** — no per-file ignore.
