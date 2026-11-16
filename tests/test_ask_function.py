@@ -3,7 +3,7 @@
 """``ask()`` driven over the real VGI protocol, against the mock endpoint.
 
 The worker runs as a subprocess and is driven with the framework's own client —
-everything DuckDB would exercise except DuckDB itself. ``test_end_to_end.py``
+everything DuckDB would exercise except DuckDB itself. ``test/sql/*.test``
 covers the SQL surface; ``test_ask_logic.py`` the validation rules in detail.
 """
 

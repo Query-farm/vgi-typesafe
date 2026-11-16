@@ -1,0 +1,106 @@
+# name: test/sql/choice.test
+# description: choice(): one choice question per row, literal and LATERAL
+# group: [typesafe]
+#
+# Runs against the bundled mock endpoint (test/mock_api/server.py), started by
+# ci/run-integration.sh: deterministic keyword-overlap answers, so values are exact.
+# {TYPESAFE_MOCK_URL}/__test/requests?tag=<unique> returns how many API requests
+# were made since the previous tag.
+
+require vgi
+
+require-env VGI_TYPESAFE_WORKER
+
+require-env TYPESAFE_MOCK_URL
+
+statement ok
+ATTACH 'typesafe' (TYPE vgi, LOCATION '{VGI_TYPESAFE_WORKER}');
+
+statement ok
+CREATE SECRET ts (TYPE typesafe, api_key 'test-key', base_url '{TYPESAFE_MOCK_URL}');
+
+statement ok
+LOAD httpfs;
+
+statement ok
+LOAD json;
+
+statement ok
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=choice-0');
+
+# The simplest call shape a user will try first. jev-latest resolves to a concrete version.
+query TTTTII
+SELECT choice, confidence, probabilities['shipping'], probabilities['billing'], model, output_tokens
+FROM typesafe.main.choice('I was charged twice',
+    instructions => 'Which team should handle this?',
+    criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+                     'billing': 'Charges, invoices, payment problems'});
+----
+billing	0.472934	0.119203	0.880797	jev-1.13.0	1
+
+query I
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=choice-1');
+----
+1
+
+# A correlated LATERAL pairs each row with its own answer; the NULL row and the
+# repeated state make no request.
+query IT
+SELECT t.id, c.choice
+FROM (VALUES (1, 'My package never arrived'), (2, 'I was charged twice'),
+             (3, NULL), (4, 'My package never arrived')) t(id, body),
+     LATERAL typesafe.main.choice(t.body,
+         instructions => 'Which team should handle this?',
+         criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+                          'billing': 'Charges, invoices, payment problems'}) c
+ORDER BY t.id;
+----
+1	shipping
+2	billing
+3	NULL
+4	shipping
+
+query I
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=choice-2');
+----
+2
+
+# DuckDB allows LATERAL to be omitted; both must behave alike.
+query TI
+SELECT c.choice, count(*) AS n
+FROM (VALUES ('lost package'), ('late delivery'), ('wrong invoice')) t(body),
+     typesafe.main.choice(t.body,
+         instructions => 'Which team should handle this?',
+         criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+                          'billing': 'Charges, invoices, payment problems'}) c
+GROUP BY c.choice ORDER BY c.choice;
+----
+billing	1
+shipping	2
+
+# A name models() lists is usable as model =>, and reaches the API unchanged.
+statement ok
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=choice-3');
+
+query TT
+SELECT choice, model FROM typesafe.main.choice('lost package', model => 'jev-preview',
+    instructions => 'Which team should handle this?',
+    criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+                     'billing': 'Charges, invoices, payment problems'});
+----
+shipping	jev-preview
+
+query T
+SELECT json_extract_string(requests, '$[0].model') FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=choice-4');
+----
+jev-preview
+
+# model => binds once, so it takes a literal; a correlated column is a binder error.
+statement error
+SELECT c.choice FROM typesafe.main.models() m,
+    LATERAL typesafe.main.choice('lost package', model => m.name,
+        instructions => 'Which team should handle this?',
+        criteria => MAP {'shipping': 'Delivery status, delays, lost packages',
+                         'billing': 'Charges, invoices, payment problems'}) c;
+----
+lateral join column parameters

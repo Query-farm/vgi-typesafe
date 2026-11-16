@@ -36,8 +36,8 @@ ROUTE_THEN_RATE = (
 
 # The yes/no probability is computed in the CTE's select list and filtered
 # outside it. Writing `WHERE ... AND typesafe.main.is_true(...) > 0.5` directly
-# beside a LATERAL table function fails in the vgi extension (see CLAUDE.md,
-# sharp edge 10); tests/test_end_to_end.py pins that with a strict xfail.
+# beside a LATERAL table function failed in older vgi extensions (see CLAUDE.md,
+# sharp edge 10); test/sql/is_true.test pins that both spellings now work.
 ROUTE_THEN_ASK_IS_TRUE = (
     "Route every message to a team, then keep only the billing messages that ask for a refund",
     "WITH routed AS (SELECT t.body, c.choice, "

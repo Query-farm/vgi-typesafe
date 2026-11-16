@@ -4,7 +4,7 @@
 
 This spawns the worker as a subprocess and talks to it with the framework's own
 client — everything DuckDB would exercise except DuckDB itself, so it runs
-without the C++ extension. ``test_end_to_end.py`` covers the SQL surface.
+without the C++ extension. ``test/sql/*.test`` covers the SQL surface.
 """
 
 from __future__ import annotations

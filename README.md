@@ -434,7 +434,7 @@ UPDATE tickets SET urgent = typesafe.main.is_true(body, 'Is this urgent?') > 0.8
 A noul answer *is* one number, so a scalar loses nothing by returning only that — and one number
 drops straight into a `WHERE`, a `CASE`, an `ORDER BY` or an `UPDATE ... SET`, where the table
 function needs a `LATERAL` join or a scalar subquery around it. **This is conciseness, not
-capability:** `noul()` can already express every one of those, and `tests/test_end_to_end.py` pins
+capability:** `noul()` can already express every one of those, and `test/sql/is_true.test` pins
 that the two agree on the same row.
 
 - It returns a **`DOUBLE`, not a `BOOLEAN`** — it is the probability that the answer is yes, so

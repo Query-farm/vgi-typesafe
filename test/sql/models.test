@@ -1,0 +1,50 @@
+# name: test/sql/models.test
+# description: models(): the model listing, as a function and as a table
+# group: [typesafe]
+#
+# Runs against the bundled mock endpoint (test/mock_api/server.py), started by
+# ci/run-integration.sh: deterministic keyword-overlap answers, so values are exact.
+# {TYPESAFE_MOCK_URL}/__test/requests?tag=<unique> returns how many API requests
+# were made since the previous tag.
+
+require vgi
+
+require-env VGI_TYPESAFE_WORKER
+
+require-env TYPESAFE_MOCK_URL
+
+statement ok
+ATTACH 'typesafe' (TYPE vgi, LOCATION '{VGI_TYPESAFE_WORKER}');
+
+statement ok
+CREATE SECRET ts (TYPE typesafe, api_key 'test-key', base_url '{TYPESAFE_MOCK_URL}');
+
+statement ok
+LOAD httpfs;
+
+statement ok
+LOAD json;
+
+query TTT
+SELECT name, description, release_date FROM typesafe.main.models() ORDER BY name;
+----
+jev-latest	The latest iteration of TypeSafe's System One Model: Jev	2026-09-10 18:38:01.391457+00
+jev-preview	A preview version of `jev-latest`: should be better in most ways	2026-09-10 18:39:06.057655+00
+
+# The table form must serve the same rows as the function.
+query TT
+SELECT name, description FROM typesafe.main.models ORDER BY name;
+----
+jev-latest	The latest iteration of TypeSafe's System One Model: Jev
+jev-preview	A preview version of `jev-latest`: should be better in most ways
+
+query I
+SELECT count(*) FROM (SELECT * FROM typesafe.main.models EXCEPT SELECT * FROM typesafe.main.models());
+----
+0
+
+# A stray argument would be an undocumented, unimplemented knob.
+statement error
+SELECT * FROM typesafe.main.models('jev-latest');
+----
+No function matches

@@ -87,18 +87,20 @@ vgi_typesafe/
 9. **The mock's listen backlog.** `ThreadingHTTPServer` defaults to 5; a multi-worker
    `LATERAL` burst dropped SYNs and surfaced as connect timeouts that looked like a
    worker bug. It sets `request_queue_size = 256`.
-10. **`is_true()` cannot sit in a `WHERE` beside a `LATERAL` table function.** The vgi
-    extension erases a scalar's constant arguments at bind; when DuckDB copies the
-    plan to decorrelate the `LATERAL`, it looks up `is_true(VARCHAR)` and fails with
-    `Serialization Error: Failed to find function`. Project it in a CTE and filter
-    outside, as `composed.py`'s example does. Pinned by a strict xfail in
-    `test_end_to_end.py`; an extension bug, not fixable here.
+10. **`is_true()` in a `WHERE` beside a `LATERAL` table function** used to fail: older
+    vgi extensions erased a scalar's constant arguments at bind, so when DuckDB copied
+    the plan to decorrelate the `LATERAL` it could not re-find `is_true(VARCHAR)`
+    (`Serialization Error: Failed to find function`). The released extension handles
+    it, and `test/sql/is_true.test` now pins both spellings: that one, and the CTE
+    form `composed.py`'s example uses.
 
 ## Testing
 
 ```sh
-uv run pytest -q                              # 473 offline; no key, no network
+uv run pytest -q                              # offline; no key, no network
+make test-sql-all                             # SQL through DuckDB against the mock: stdio, launch, http
 TYPESAFE_API_KEY=... uv run pytest -m live    # 26 live; real API, real tokens
+make check                                    # everything CI runs
 ```
 
 | Area | Files |
@@ -108,19 +110,24 @@ TYPESAFE_API_KEY=... uv run pytest -m live    # 26 live; real API, real tokens
 | Auth | `test_auth.py` |
 | Validation rules, as user-facing messages | `test_ask_logic.py`, `test_ask_dynamic_logic.py` |
 | Each function over the real VGI protocol | `test_*_function.py` |
-| Real SQL (`ATTACH`, `LATERAL`, whole-row state) | `test_end_to_end.py` |
-| Every published example, executed | `test_examples.py` |
+| Real SQL (`ATTACH`, `LATERAL`, whole-row state) | `test/sql/*.test` |
+| Every published example, executed | `test/sql/examples.test`, generated and kept in sync by `test_examples.py` |
 | Installable by someone who is not us | `test_packaging.py` |
 | pydoclint, run inside the suite | `test_docstrings.py` |
 | The real API | `test_live.py` |
 
-The SQL tests drive the `haybarn` shell built from `../vgi`
-(`../vgi/build/release/haybarn`); set `HAYBARN` to use another binary. They **skip**
-when it is absent — which is why CI reports ~99 skips and a local run does not.
+The SQL tests (`test/sql/*.test`) run through the published `haybarn-unittest`
+with the signed community `vgi` extension, via `ci/run-integration.sh` — the
+vgi-starter harness — over stdio, launch and HTTP. The script starts
+`test/mock_api/server.py` (the bundled mock plus a `/__test/requests?tag=` log the
+tests use to assert how many requests a query made) and unsets `TYPESAFE_*`, so no
+real key can leak in.
 
 `test_examples.py` collects from **all five** carriers examples reach a client
 through (`Meta.examples`, `vgi.example_queries` on functions and on the schema,
-`vgi.executable_examples`, and the private graders) and executes every one. Four
+`vgi.executable_examples`, and the private graders) and renders every one into
+`test/sql/examples.test`, which the SQL suite executes; regenerate it with
+`UPDATE_SQL_TESTS=1 uv run pytest tests/test_examples.py`. Four
 grader queries once selected `FROM tickets`, a table this worker does not have and
 `vgi-lint simulate` never creates — they could not run at all, and nothing noticed.
 

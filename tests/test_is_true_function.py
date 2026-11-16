@@ -6,7 +6,7 @@ The scalar is the one function here that is handed an Arrow *vector* and must
 decide for itself how many requests that is worth. So the assertions that matter
 are about request accounting — one per distinct non-null value, none at all for
 a NULL — and about the bind-time check that keeps a blank question from reaching
-the API. ``test_end_to_end.py`` covers the SQL surface, including the `WHERE`
+the API. ``test/sql/*.test`` covers the SQL surface, including the `WHERE`
 clause this function exists for.
 """
 

@@ -19,6 +19,8 @@ env:
   # entry scripts carry their own PEP-723 headers, and a missing one shipped a
   # worker that only ran from the author's project directory.
   UV_NO_SOURCES: "1"
+  # The SQL test runner; it must speak the same VGI protocol as the SDK.
+  HAYBARN_VERSION: "2.0.0rc11"
 
 jobs:
   check:
@@ -48,6 +50,38 @@ jobs:
           cd "$(mktemp -d)"
           uv run --no-project "$GITHUB_WORKSPACE/typesafe_worker.py" --help > /dev/null
           uv run --no-project "$GITHUB_WORKSPACE/serve.py" --help > /dev/null
+
+  integration:
+    name: SQL tests (${{ matrix.os }}, ${{ matrix.transport }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        transport: [stdio, launch, http]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+          enable-cache: true
+      - name: Build the worker
+        run: uv sync --no-sources --locked --all-extras
+      - name: Install the SQL test runner
+        run: |
+          uv venv .tools
+          uv pip install -p .tools "haybarn-unittest==${HAYBARN_VERSION}"
+      # test/sql/*.test through DuckDB with the signed community vgi extension,
+      # against the bundled mock endpoint (test/mock_api/server.py): no key, no network.
+      - name: Run test/sql over ${{ matrix.transport }}
+        run: |
+          export WORKER="$PWD/.venv/bin/vgi-typesafe"
+          export HAYBARN_UNITTEST="$PWD/.tools/bin/haybarn-unittest"
+          TRANSPORT=${{ matrix.transport }} PYTHON="uv run --no-project python" ci/run-integration.sh
 
   catalog:
     name: Catalog metadata (vgi-lint)

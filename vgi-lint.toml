@@ -26,7 +26,7 @@ fail_on = "warning"
 # What the tag DOES declare is the part that is fixed and checkable by a reader:
 # one variant per question `type`, giving the STRUCT each produces, plus the
 # always-present `usage` column. tests/test_ask_function.py and
-# tests/test_end_to_end.py pin those shapes by DESCRIBE, which is the coverage
+# test/sql/catalog.test pin those shapes by DESCRIBE, which is the coverage
 # VGI910 would otherwise provide.
 "typesafe.main.ask" = { ignore = [
   { code = "VGI910", kind = "domain-exemption", reason = "result column NAMES are the caller's question keys, so no fixed variant table can enumerate them; the per-type STRUCT shapes are declared and are pinned by DESCRIBE tests" },

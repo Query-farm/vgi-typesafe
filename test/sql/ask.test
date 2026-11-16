@@ -1,0 +1,132 @@
+# name: test/sql/ask.test
+# description: ask(): several typed questions per row, one request per distinct state
+# group: [typesafe]
+#
+# Runs against the bundled mock endpoint (test/mock_api/server.py), started by
+# ci/run-integration.sh: deterministic keyword-overlap answers, so values are exact.
+# {TYPESAFE_MOCK_URL}/__test/requests?tag=<unique> returns how many API requests
+# were made since the previous tag.
+
+require vgi
+
+require-env VGI_TYPESAFE_WORKER
+
+require-env TYPESAFE_MOCK_URL
+
+statement ok
+ATTACH 'typesafe' (TYPE vgi, LOCATION '{VGI_TYPESAFE_WORKER}');
+
+statement ok
+CREATE SECRET ts (TYPE typesafe, api_key 'test-key', base_url '{TYPESAFE_MOCK_URL}');
+
+statement ok
+LOAD httpfs;
+
+statement ok
+LOAD json;
+
+statement ok
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=ask-0');
+
+# Every question answered from one request per row; a struct holding only NULLs makes no request.
+query ITTTTII
+SELECT t.id, a.dept.choice, a.angry.noul, a.angry.noul > 0.5, a.severity.score,
+       a.usage.model, a.usage.output_tokens
+FROM (VALUES (1, 'My package is lost, this is unacceptable', 'gold'),
+             (2, 'Thanks, one invoice question', 'free'),
+             (3, NULL, NULL)) t(id, body, tier),
+     LATERAL typesafe.main.ask({'message': t.body, 'tier': t.tier}, questions => {
+    'dept':     {'type': 'choice', 'instructions': 'Which team should handle this?',
+                 'criteria': {'shipping': 'Delivery status, delays, lost packages',
+                              'billing': 'Charges, invoices, payment problems'}},
+    'angry':    {'type': 'noul', 'instructions': 'Is the customer angry?',
+                 'criteria': {'true': 'furious, unacceptable', 'false': 'calm, thanks'}},
+    'severity': {'type': 'score', 'instructions': 'How bad is it?',
+                 'criteria': ['minor question', 'disruptive delay', 'critical outage']}}) a
+ORDER BY t.id;
+----
+1	shipping	0.731059	true	0.999999	jev-1.13.0	3
+2	billing	0.047426	false	0.319521	jev-1.13.0	3
+3	NULL	NULL	NULL	NULL	NULL	NULL
+
+query IT
+SELECT n, json_keys(json_extract(requests, '$[0].state')) FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=ask-1');
+----
+2	[message, tier]
+
+# The whole row as the state (an ANY-typed blended input column).
+query T
+SELECT a.dept.choice FROM (VALUES (1, 'My package is lost, this is unacceptable', 'gold'),
+             (2, 'Thanks, one invoice question', 'free'),
+             (3, NULL, NULL)) t(id, body, tier), LATERAL typesafe.main.ask(t, questions => {
+    'dept':     {'type': 'choice', 'instructions': 'Which team should handle this?',
+                 'criteria': {'shipping': 'Delivery status, delays, lost packages',
+                              'billing': 'Charges, invoices, payment problems'}},
+    'angry':    {'type': 'noul', 'instructions': 'Is the customer angry?',
+                 'criteria': {'true': 'furious, unacceptable', 'false': 'calm, thanks'}},
+    'severity': {'type': 'score', 'instructions': 'How bad is it?',
+                 'criteria': ['minor question', 'disruptive delay', 'critical outage']}}) a WHERE t.id = 1;
+----
+shipping
+
+query TTT
+SELECT json_extract(requests, '$[0].state.id'), json_extract_string(requests, '$[0].state.tier'),
+       json_extract_string(requests, '$[0].state.body')
+FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=ask-2');
+----
+1	gold	My package is lost, this is unacceptable
+
+# The all-JSON path: questions as JSON text, a JSON state parsed into an object.
+query T
+SELECT a.spam.noul < 0.5
+FROM (VALUES ('{"subject": "lunch?", "body": "see you at noon"}'::JSON)) t(payload),
+     LATERAL typesafe.main.ask(t.payload, parse_json => true, questions =>
+         '{"spam": {"type": "noul", "instructions": "Is this a lottery prize scam?"}}') a;
+----
+true
+
+query T
+SELECT json_extract(requests, '$[0].state')::VARCHAR FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=ask-3');
+----
+{"subject":"lunch?","body":"see you at noon"}
+
+# One batch can hide a pairing bug; several thousand rows cannot.
+query II
+WITH t AS (SELECT i AS id, CASE WHEN i % 3 = 0 THEN 'invoice charges' ELSE 'lost package' END AS body,
+                  CASE WHEN i % 3 = 0 THEN 'billing' ELSE 'shipping' END AS expected
+           FROM range(3000) r(i))
+SELECT count(*), count(*) FILTER (WHERE a.dept.choice = t.expected)
+FROM t, LATERAL typesafe.main.ask({'id': t.id, 'message': t.body},
+    questions => {'dept': {'type': 'choice', 'instructions': 'Which team?',
+                           'criteria': {'shipping': 'lost packages', 'billing': 'invoice charges'}}},
+    concurrency => 16) a;
+----
+3000	3000
+
+statement ok
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=ask-4');
+
+# A malformed question is rejected when the query is planned, before anything is billed.
+statement error
+SELECT * FROM typesafe.main.ask('x', questions =>
+    {'sev': {'type': 'score', 'instructions': 'How bad?', 'criteria': ['only one level']}});
+----
+score question 'sev' requires 'criteria'
+
+# A bare scalar state is rejected, saying what to pass instead.
+statement error
+SELECT * FROM typesafe.main.ask(42, questions => {
+    'dept':     {'type': 'choice', 'instructions': 'Which team should handle this?',
+                 'criteria': {'shipping': 'Delivery status, delays, lost packages',
+                              'billing': 'Charges, invoices, payment problems'}},
+    'angry':    {'type': 'noul', 'instructions': 'Is the customer angry?',
+                 'criteria': {'true': 'furious, unacceptable', 'false': 'calm, thanks'}},
+    'severity': {'type': 'score', 'instructions': 'How bad is it?',
+                 'criteria': ['minor question', 'disruptive delay', 'critical outage']}});
+----
+state must be VARCHAR, STRUCT, LIST or MAP
+
+query I
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=ask-5');
+----
+0

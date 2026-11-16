@@ -458,7 +458,7 @@ _TYPESAFE_CATALOG = Catalog(
             # FROM typesafe.main.models`, no parentheses — which is what
             # vgi-lint's VGI311 asks for. DuckDB keeps tables and table
             # functions in separate catalog sets, so one name can be both;
-            # tests/test_end_to_end.py pins that both resolve and agree.
+            # test/sql/models.test pins that both resolve and agree.
             tables=[
                 Table(
                     name="models",

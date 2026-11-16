@@ -1,0 +1,104 @@
+# name: test/sql/catalog.test
+# description: What the worker publishes: functions, the models table, and their declared types
+# group: [typesafe]
+#
+# Runs against the bundled mock endpoint (test/mock_api/server.py), started by
+# ci/run-integration.sh: deterministic keyword-overlap answers, so values are exact.
+# {TYPESAFE_MOCK_URL}/__test/requests?tag=<unique> returns how many API requests
+# were made since the previous tag.
+
+require vgi
+
+require-env VGI_TYPESAFE_WORKER
+
+require-env TYPESAFE_MOCK_URL
+
+statement ok
+ATTACH 'typesafe' (TYPE vgi, LOCATION '{VGI_TYPESAFE_WORKER}');
+
+query TT
+SELECT function_name, function_type FROM duckdb_functions() WHERE database_name = 'typesafe' ORDER BY ALL;
+----
+ask	table
+ask_dynamic	table
+choice	table
+is_true	scalar
+models	table
+noul	table
+score	table
+
+query TT
+SELECT schema_name, table_name FROM duckdb_tables() WHERE database_name = 'typesafe';
+----
+main	models
+
+# An agent planning a join needs to know `name` identifies a row; the API may omit a release date.
+query TTTT
+SELECT column_name, column_type, "null", "key" FROM (DESCRIBE typesafe.main.models);
+----
+name	VARCHAR	NO	PRI
+description	VARCHAR	NO	NULL
+release_date	TIMESTAMP WITH TIME ZONE	YES	NULL
+
+# DESCRIBE binds without a request, so none of these need a secret.
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM typesafe.main.models());
+----
+name	VARCHAR
+description	VARCHAR
+release_date	TIMESTAMP WITH TIME ZONE
+
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM typesafe.main.choice('x', instructions => 'Which team?', criteria => MAP {'shipping': 'Lost packages', 'billing': 'Invoices'}));
+----
+choice	VARCHAR
+confidence	DOUBLE
+probabilities	MAP(VARCHAR, DOUBLE)
+model	VARCHAR
+input_tokens	BIGINT
+output_tokens	BIGINT
+
+# A noul answer is one number; a confidence column here would have to be invented.
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM typesafe.main.noul('x', instructions => 'Is this a test?'));
+----
+noul	DOUBLE
+model	VARCHAR
+input_tokens	BIGINT
+output_tokens	BIGINT
+
+# The INTEGER-keyed MAP is the score scale's levels.
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM typesafe.main.score('x', instructions => 'How severe is this?', criteria => ['minor question', 'disruptive delay', 'critical outage']));
+----
+score	DOUBLE
+confidence	DOUBLE
+probabilities	MAP(INTEGER, DOUBLE)
+model	VARCHAR
+input_tokens	BIGINT
+output_tokens	BIGINT
+
+# ask() output columns are typed per question.
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM typesafe.main.ask('x', questions => {
+    'dept':     {'type': 'choice', 'instructions': 'Which team should handle this?',
+                 'criteria': {'shipping': 'Delivery status, delays, lost packages',
+                              'billing': 'Charges, invoices, payment problems'}},
+    'angry':    {'type': 'noul', 'instructions': 'Is the customer angry?',
+                 'criteria': {'true': 'furious, unacceptable', 'false': 'calm, thanks'}},
+    'severity': {'type': 'score', 'instructions': 'How bad is it?',
+                 'criteria': ['minor question', 'disruptive delay', 'critical outage']}}));
+----
+dept	STRUCT(choice VARCHAR, confidence DOUBLE, probabilities MAP(VARCHAR, DOUBLE))
+angry	STRUCT(noul DOUBLE)
+severity	STRUCT(score DOUBLE, confidence DOUBLE, probabilities MAP(INTEGER, DOUBLE))
+usage	STRUCT(model VARCHAR, input_tokens BIGINT, output_tokens BIGINT)
+
+# ask_dynamic() declares a fixed shape because its answers are not.
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM typesafe.main.ask_dynamic('x', '{"urgent": {"type": "noul", "instructions": "Does this need a reply today?"}}'));
+----
+answers	VARCHAR
+model	VARCHAR
+input_tokens	BIGINT
+output_tokens	BIGINT

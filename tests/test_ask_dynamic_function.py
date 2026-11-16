@@ -5,7 +5,7 @@
 The worker runs as a subprocess and is driven with the framework's own client, so
 both positional arguments arrive as real input columns — which is the only way to
 prove that the questions really are per-row and not quietly bound once.
-``test_end_to_end.py`` covers the SQL surface; ``test_ask_dynamic_logic.py`` the
+``test/sql/*.test`` covers the SQL surface; ``test_ask_dynamic_logic.py`` the
 validation rules in detail.
 """
 

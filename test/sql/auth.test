@@ -1,0 +1,70 @@
+# name: test/sql/auth.test
+# description: Credentials: CREATE SECRET, redaction, and the errors without a usable key
+# group: [typesafe]
+#
+# Runs against the bundled mock endpoint (test/mock_api/server.py), started by
+# ci/run-integration.sh: deterministic keyword-overlap answers, so values are exact.
+# {TYPESAFE_MOCK_URL}/__test/requests?tag=<unique> returns how many API requests
+# were made since the previous tag.
+
+require vgi
+
+require-env VGI_TYPESAFE_WORKER
+
+require-env TYPESAFE_MOCK_URL
+
+statement ok
+ATTACH 'typesafe' (TYPE vgi, LOCATION '{VGI_TYPESAFE_WORKER}');
+
+statement ok
+LOAD httpfs;
+
+statement ok
+LOAD json;
+
+statement ok
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=auth-0');
+
+# No key at all: the message is the only guidance a SQL user gets, and nothing is sent.
+statement error
+SELECT * FROM typesafe.main.choice('hello', instructions => 'Which team?', criteria => MAP {'shipping': 'Lost packages', 'billing': 'Invoices'});
+----
+CREATE SECRET
+
+query I
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=auth-1');
+----
+0
+
+# A wrong key fails the query rather than returning empty results.
+statement ok
+CREATE SECRET ts (TYPE typesafe, api_key 'wrong', base_url '{TYPESAFE_MOCK_URL}');
+
+statement error
+SELECT * FROM typesafe.main.choice('hello', instructions => 'Which team?', criteria => MAP {'shipping': 'Lost packages', 'billing': 'Invoices'});
+----
+rejected the API key
+
+# Zero rows from models() would read as "no models", a different fact entirely.
+statement error
+SELECT * FROM typesafe.main.models();
+----
+rejected the API key
+
+statement ok
+DROP SECRET ts;
+
+statement ok
+CREATE SECRET ts (TYPE typesafe, api_key 'test-key', base_url '{TYPESAFE_MOCK_URL}');
+
+# The key is redacted for anyone on the connection.
+query TT
+SELECT secret_string NOT LIKE '%test-key%', secret_string LIKE '%api_key=redacted%'
+FROM duckdb_secrets() WHERE type = 'typesafe';
+----
+true	true
+
+query T
+SELECT choice FROM typesafe.main.choice('lost package', instructions => 'Which team?', criteria => MAP {'shipping': 'Lost packages', 'billing': 'Invoices'});
+----
+shipping

@@ -48,8 +48,6 @@ dev = [
     "ruff>=0.16,<0.17",
     "mypy>=1.11",
     "pyarrow-stubs",
-    # Drives a real ATTACH in tests/test_end_to_end.py.
-    "duckdb>=1.1",
 ]
 
 [project.scripts]
@@ -124,9 +122,8 @@ warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# e2e tests are hermetic (mock endpoint) and skip themselves without a haybarn binary.
+# SQL through a real ATTACH lives in test/sql/*.test (make test-sql), not here.
 addopts = "-m 'not live'"
 markers = [
-    "e2e: drives a real ATTACH against the mock endpoint (needs a DuckDB shell with the vgi extension)",
     "live: hits the real TypeSafe API (needs TYPESAFE_API_KEY)",
 ]

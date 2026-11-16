@@ -4,7 +4,7 @@
 
 The worker runs as a subprocess and is driven with the framework's own client,
 so this exercises bind, init and the generator's single tick exactly as DuckDB
-would — without needing the C++ extension. ``test_end_to_end.py`` covers the SQL
+would — without needing the C++ extension. ``test/sql/*.test`` covers the SQL
 surface; ``test_typesafe_api.py`` covers the parsing in isolation.
 
 The function is a source, not a transform, so it is driven through

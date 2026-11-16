@@ -1,0 +1,93 @@
+# name: test/sql/noul_score.test
+# description: noul() and score(): yes/no probabilities and positions on an ordered scale
+# group: [typesafe]
+#
+# Runs against the bundled mock endpoint (test/mock_api/server.py), started by
+# ci/run-integration.sh: deterministic keyword-overlap answers, so values are exact.
+# {TYPESAFE_MOCK_URL}/__test/requests?tag=<unique> returns how many API requests
+# were made since the previous tag.
+
+require vgi
+
+require-env VGI_TYPESAFE_WORKER
+
+require-env TYPESAFE_MOCK_URL
+
+statement ok
+ATTACH 'typesafe' (TYPE vgi, LOCATION '{VGI_TYPESAFE_WORKER}');
+
+statement ok
+CREATE SECRET ts (TYPE typesafe, api_key 'test-key', base_url '{TYPESAFE_MOCK_URL}');
+
+statement ok
+LOAD httpfs;
+
+statement ok
+LOAD json;
+
+statement ok
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=ns-0');
+
+query ITTII
+SELECT t.id, n.noul, n.noul > 0.5, n.model, n.output_tokens
+FROM (VALUES (1, 'My package never arrived'), (2, 'Thanks for the quick refund'), (3, NULL)) t(id, body),
+     LATERAL typesafe.main.noul(t.body, instructions => 'Is this message about a lost package?') n
+ORDER BY t.id;
+----
+1	0.731059	true	jev-1.13.0	1
+2	0.268941	false	jev-1.13.0	1
+3	NULL	NULL	NULL	NULL
+
+# The NULL row makes no request.
+query I
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=ns-1');
+----
+2
+
+# The MAP-typed criteria describe the two outcomes, and reach the API as given.
+query T
+SELECT noul > 0.5 FROM typesafe.main.noul('My package never arrived',
+    instructions => 'Is this urgent?',
+    criteria => MAP {'true': 'a lost package', 'false': 'a routine question'});
+----
+true
+
+query TT
+SELECT json_extract_string(requests, '$[0].questions.noul.criteria.true'),
+       json_extract_string(requests, '$[0].questions.noul.criteria.false')
+FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=ns-2');
+----
+a lost package	a routine question
+
+# ... and may name only those two outcomes.
+statement error
+SELECT noul FROM typesafe.main.noul('x', instructions => 'Is this urgent?', criteria => MAP {'maybe': 'who knows'});
+----
+'true' and 'false'
+
+# An ordered scale orders the rows.
+query ITTT
+SELECT t.id, s.score, s.confidence, s.probabilities
+FROM (VALUES (1, 'A minor question'), (2, 'A critical outage')) t(id, body),
+     LATERAL typesafe.main.score(t.body, instructions => 'How severe is this?', criteria => ['minor question', 'disruptive delay', 'critical outage']) s
+ORDER BY t.id;
+----
+1	0.053004	0.838595	{0=0.964663, 1=0.017668, 2=0.017668}
+2	1.946994	0.838595	{0=0.017668, 1=0.017668, 2=0.964663}
+
+query T
+SELECT json_extract(requests, '$[0].questions.score.criteria')::VARCHAR
+FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=ns-3');
+----
+["minor question","disruptive delay","critical outage"]
+
+# A one-level scale places nothing; it is rejected at bind, before anything is billed.
+statement error
+SELECT * FROM typesafe.main.score('x', instructions => 'How bad?', criteria => ['only one level']);
+----
+lowest first
+
+query I
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=ns-4');
+----
+0

@@ -1,0 +1,123 @@
+# name: test/sql/ask_dynamic.test
+# description: ask_dynamic(): questions that differ from row to row, answers as JSON
+# group: [typesafe]
+#
+# Runs against the bundled mock endpoint (test/mock_api/server.py), started by
+# ci/run-integration.sh: deterministic keyword-overlap answers, so values are exact.
+# {TYPESAFE_MOCK_URL}/__test/requests?tag=<unique> returns how many API requests
+# were made since the previous tag.
+
+require vgi
+
+require-env VGI_TYPESAFE_WORKER
+
+require-env TYPESAFE_MOCK_URL
+
+statement ok
+ATTACH 'typesafe' (TYPE vgi, LOCATION '{VGI_TYPESAFE_WORKER}');
+
+statement ok
+CREATE SECRET ts (TYPE typesafe, api_key 'test-key', base_url '{TYPESAFE_MOCK_URL}');
+
+statement ok
+LOAD httpfs;
+
+statement ok
+LOAD json;
+
+statement ok
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=dyn-0');
+
+# Each row is asked the questions it carries; the answers are reachable with DuckDB's JSON functions.
+query ITT
+SELECT t.id, a.answers->'dept'->>'choice', (a.answers->'urgent'->>'noul')::DOUBLE > 0.5
+FROM (VALUES (1, 'My package is lost and delivery is delayed', '{"dept": {"type": "choice", "instructions": "Which team should handle this?", "criteria": {"shipping": "Delivery status, delays, lost packages", "billing": "Charges, invoices, payment problems"}}}'),
+             (2, 'Thanks, just one routine question', '{"urgent": {"type": "noul", "instructions": "Does this need a reply today?"}}'),
+             (3, NULL, NULL)) t(id, body, questions),
+     LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a
+ORDER BY t.id;
+----
+1	shipping	NULL
+2	NULL	false
+3	NULL	NULL
+
+# The NULL row makes no request; requests run concurrently, so sort their question ids.
+query IT
+SELECT n, list_sort([json_keys(json_extract(requests, '$[0].questions'))[1],
+                     json_keys(json_extract(requests, '$[1].questions'))[1]])
+FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=dyn-1');
+----
+2	[dept, urgent]
+
+# Heterogeneous questions in a STRUCT column: DuckDB pads each row with the other
+# row's question as NULL, and that padding must not reach the API.
+query IT
+SELECT t.id, json_keys(a.answers)
+FROM (VALUES (1, 'My package is lost', {'dept': {'type': 'choice', 'instructions': 'Which team?',
+                  'criteria': {'shipping': 'Lost packages', 'billing': 'Invoices'}}}),
+             (2, 'Thanks', {'urgent': {'type': 'noul', 'instructions': 'Does this need a reply today?',
+                  'criteria': NULL}})) t(id, body, questions),
+     LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a
+ORDER BY t.id;
+----
+1	[dept]
+2	[urgent]
+
+query IT
+SELECT n, list_sort([json_keys(json_extract(requests, '$[0].questions'))[1],
+                     json_keys(json_extract(requests, '$[1].questions'))[1]])
+FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=dyn-2');
+----
+2	[dept, urgent]
+
+# One request per distinct (state, questions) pair, not per distinct state.
+query II
+SELECT count(*), count(DISTINCT a.answers)
+FROM (VALUES ('My package is lost', '{"dept": {"type": "choice", "instructions": "Which team should handle this?", "criteria": {"shipping": "Delivery status, delays, lost packages", "billing": "Charges, invoices, payment problems"}}}'),
+             ('My package is lost', '{"dept": {"type": "choice", "instructions": "Which team should handle this?", "criteria": {"shipping": "Delivery status, delays, lost packages", "billing": "Charges, invoices, payment problems"}}}'),
+             ('My package is lost', '{"urgent": {"type": "noul", "instructions": "Does this need a reply today?"}}')) t(body, questions),
+     LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a;
+----
+3	2
+
+query I
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=dyn-3');
+----
+2
+
+# Score levels stay usable keys inside the JSON (digits, since JSON keys are text).
+query TTTI
+SELECT a.answers, a.model, (a.answers->'sev'->'probabilities'->>'2')::DOUBLE > 0.5, a.output_tokens
+FROM typesafe.main.ask_dynamic('The whole site is down, a critical outage',
+    '{"sev": {"type": "score", "instructions": "How severe is this?",
+      "criteria": ["minor question", "disruptive delay", "critical outage"]}}') a;
+----
+{"sev": {"score": 1.946994, "confidence": 0.838595, "probabilities": {"0": 0.017668, "1": 0.017668, "2": 0.964663}}}	jev-1.13.0	true	1
+
+# A row with no questions: the message quotes that row's own content.
+statement error
+SELECT a.answers FROM (VALUES ('My package is lost', '{"dept": {"type": "choice", "instructions": "Which team should handle this?", "criteria": {"shipping": "Delivery status, delays, lost packages", "billing": "Charges, invoices, payment problems"}}}'), ('No question for me', NULL))
+     t(body, questions), LATERAL typesafe.main.ask_dynamic(t.body, t.questions) a;
+----
+<REGEX>:.*carries no questions.*No question for me.*
+
+# Malformed questions can only be caught mid-scan, so the message names the row and the question.
+statement error
+SELECT a.answers FROM typesafe.main.ask_dynamic('x',
+    '{"sev": {"type": "score", "instructions": "How bad?", "criteria": ["only one level"]}}') a;
+----
+<REGEX>:.*ask_dynamic\(\): score question 'sev' requires 'criteria'.*row 0 of this input batch.*
+
+statement ok
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=dyn-4');
+
+# A questions column of the wrong type fails before the scan starts.
+statement error
+SELECT * FROM typesafe.main.ask_dynamic('x', 42);
+----
+questions must be VARCHAR, STRUCT or MAP
+
+query I
+SELECT n FROM read_json('{TYPESAFE_MOCK_URL}/__test/requests?tag=dyn-5');
+----
+0
