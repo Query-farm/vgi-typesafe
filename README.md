@@ -34,6 +34,8 @@
 
 ---
 
+vgi-typesafe 0.4.0 speaks VGI protocol 3.4, so it needs Haybarn 2.0.1 or newer (Haybarn 2.0.0 loads a 3.3 `vgi` extension that cannot attach it).
+
 ## Install and attach
 
 Nothing to clone — `uvx` fetches and runs the worker, and DuckDB speaks to it over
